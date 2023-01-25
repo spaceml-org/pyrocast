@@ -13,7 +13,7 @@ class RandomForest(RandomForestClassifier):
 
 
 if __name__ in "___main__":
-    x_train, ytrain, x_test, y_test = dp.load_sets()
+    x_train, ytrain, x_test, y_test = dp.load_rfdata()
     clf = RandomForest()
     clf.fit(x_train, y_train)
     y_pred = clf.predict()
