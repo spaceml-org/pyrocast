@@ -1,6 +1,6 @@
 # Pyrocast
 
-![Pyrocast logo]('~/figures/pyrocast_logo_colour.png')
+![Pyrocast logo]('figures/pyrocast_logo_colour.png')
 
 ## Getting started
 
