@@ -9,8 +9,6 @@ from datetime import timedelta, timezone, datetime
 import torch.optim as optim
 import torchvision.transforms as transforms
 import torchvision
-import torch.nn.functional as F
-from torch import nn
 from google.cloud import storage
 import os
 import copy
