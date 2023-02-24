@@ -1,4 +1,4 @@
-import utils.dataprep as dp
+import utils.data.dataprep as dp
 from utils import metrics
 from torch import nn
 import torch.nn.functional as F
@@ -38,7 +38,7 @@ if __name__ in "__main__":
     # Initialise model
     cnn = CNN(n_channels)
     criterion = nn.MSELoss()
-    optimizer = optim.SGD(cnn.parameters(), lr=0.001, momentum=0.9))
+    optimizer = optim.SGD(cnn.parameters(), lr=0.001, momentum=0.9)
 
     # Train
 

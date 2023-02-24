@@ -1,4 +1,4 @@
-from utils.dataprep as dp
+import utils.data.dataprep  as dp
 from utils import metrics
 from torch import nn
 import torch.nn.functional as F

@@ -1,5 +1,5 @@
 from sklearn.ensemble import RandomForestClassifier
-import utils.dataprep as dp
+import utils.data.dataprep as dp
 from utils import metrics
 import numpy as np
 import joblib
