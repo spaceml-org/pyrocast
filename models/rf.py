@@ -4,10 +4,8 @@ from sklearn.metrics import roc_curve, roc_auc_score, confusion_matrix
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.inspection import permutation_importance
 from itertools import permutations, combinations
-#import utils.dataprep as dp
 import utils.data.dataprep as dp
 from scipy.stats import norm
-import math
 
 
 
@@ -114,12 +112,6 @@ def getRep(seed, X_tr, y_tr, X_te, y_te, event_df_te, rep, C=None, byinistate=Tr
     
     res, rocurve = getMsrs_rf(mod2, X_te, y_te)
     res["rep"] = rep
-    
-    
-    
-    
-    
-    
     out = [res, rocurve]
     
     if byinistate:
