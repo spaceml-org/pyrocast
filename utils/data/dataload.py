@@ -1,17 +1,16 @@
-from google.cloud import bigquery
 from tqdm import tqdm
-from datetime import datetime, timedelta
+from datetime import timedelta
 import zarr
-from datetime import timedelta, timezone, datetime
-import torchvision.transforms as transforms
-import torchvision
-from google.cloud import storage
 import os
 import copy
 import xarray as xr
 import pandas as pd
 import numpy as np
 import logging
+import glob
+
+# uncomment if you are working from Google Cloud Console
+# from google.cloud import storage
 
 
 def load_data(train_list: list, parent_dir: str, event_id: str):
@@ -97,7 +96,8 @@ def load_files(parent_dir, datetime_list, event_id):
     """
 
     logging.info('Start reading in files')
-    client = storage.Client()
+    # if you are working from Google Cloud Console
+    #client = storage.Client()
 
     # filename components
     secs = '00'
@@ -126,17 +126,18 @@ def load_files(parent_dir, datetime_list, event_id):
         # For each timestep, read in all the spectral channels
         channel_datasets = []
         prefix = 'Himawari8/CroppedImg/' + year + month + day + time
-        file_list = client.list_blobs('eu-aerosols-landing', prefix=prefix)
+        #file_list = client.list_blobs('eu-aerosols-landing', prefix=prefix)
+        file_list = glob.glob('eu-aerosols-landing', prefix=prefix)
 
         for blob in file_list:
             filename = str(blob.name)
             try:
-                tmp = pd.read_csv('gs://eu-aerosols-landing/' +
-                                  filename, header=None).values
+                tmp = pd.read_csv('eu-aerosols-landing/' + filename, header=None).values
+                # tmp = pd.read_csv('gs://eu-aerosols-landing/' +filename, header=None).values
                 channel_datasets.append(tmp)
             except FileNotFoundError:
-                logging.warning(
-                    'File not found: gs://eu-aerosols-landing/' + filename)
+                logging.warning('File not found: eu-aerosols-landing/' + filename)
+                # logging.warning('File not found: gs://eu-aerosols-landing/' + filename)
 
         # For each timestep, if the complete set of channels was found, concatenate them together in an xarray
         if len(channel_datasets) != 6:
@@ -154,7 +155,8 @@ def load_files(parent_dir, datetime_list, event_id):
             dataset_cubes.append(output_as_dataarray.values)
 
             # Read in corresponding PyroCb flag. Only one label per observation
-            flagpath = 'gs://eu-aerosols-landing/PyroCb_masks/' + event_id + \
+            # flagpath = 'gs://eu-aerosols-landing/PyroCb_masks/' + event_id + \
+            flagpath = 'eu-aerosols-landing/PyroCb_masks/' + event_id + \
                 '/' + year + month + str(int(day)) + \
                 flagtime + 'PyroCb_flags.zarr'
 

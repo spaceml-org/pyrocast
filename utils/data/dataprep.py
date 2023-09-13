@@ -2,7 +2,7 @@
 import torchvision.transforms as transforms
 import torch
 import numpy as np
-import utils.cube_matching as cm
+import utils.data.cube_matching as cm
 
 
 class HimawariDataset(torch.utils.data.Dataset):

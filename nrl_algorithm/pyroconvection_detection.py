@@ -166,9 +166,10 @@ if __name__ == "__main__":
 
     # import zarr file
 
-    bucket = 'eu-aerosols-landing'
-    outdir = 'WildFireSubevents'
-    storage_root = 'gs://{}/{}/'.format(bucket, outdir)
+    # if using Google Cloud Console
+    # bucket = 'eu-aerosols-landing'
+    # outdir = 'WildFireSubevents'
+    # storage_root = 'gs://{}/{}/'.format(bucket, outdir)
     event_id = "180_1"
 
     data_path = os.path.join(storage_root, event_id, "data")
