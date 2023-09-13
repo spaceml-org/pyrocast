@@ -12,3 +12,6 @@ Pyrocast is a end-to-end machine learning pipeline for the prediction of extreme
 * `icp` to understand the causal drivers of the pyrocumolonimbus clouds
 
 ## Getting started
+
+1. Install environment
+2. Install `gsutil` and download the data from the Google bucket
