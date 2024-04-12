@@ -11,7 +11,8 @@ Pyrocast is a end-to-end machine learning pipeline for the prediction of extreme
 * `models` to forecast the pyrocumolonimbus clouds
 * `icp` to understand the causal drivers of the pyrocumolonimbus clouds
 
+The code for this repository is currently incomplete, the authors are contributing to the repository in their spare time so please be patient.
+
 ## Getting started
 
-1. Install environment
-2. Install `gsutil` and download the data from the Google bucket
+Get in touch with jodie@fdl.ai to get access to the data on [Google Cloud Storage](https://console.cloud.google.com/storage/browser/eu-aerosols-spaceml).
