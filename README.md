@@ -64,5 +64,25 @@ GOES-16 / GOES-17
 
 ### Weather and fuel
 
+Array shape = 19 x 200 x 200
+
 | N | Content |
 |---|---|
+| 1| 10m v component of wind |
+| 2| 10m wind gust since previous post processing|
+| 3| boundary layer height|
+| 4| convective available potential energy|
+| 5| convective inhibition|
+| 6| geopotential|
+| 7| surface latent heat flux
+| 8| surface sensible heat flux|
+| 9| surface vertical velocity |
+|10| component of wind at 250hPa |
+|11| v component of wind at 250hPa |
+|12| fraction of high vegetation |
+|13| fraction of low vegetation |
+|14| type of high vegetation|
+|15| type of low vegetation |
+|16| relative humidity at 650hPa|
+|17| relative humidity at 750hPa|
+|18| relative humidity at 850hPa|
