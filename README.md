@@ -26,12 +26,12 @@ Extracting data from a zarr folder event will yield Nx200x200 cube where N corre
 
 ### Flags and masks
 
-PyroCb_flags.zarr (Array shape = 1)
+PyroCb_flags.zarr (array shape = 1)
 | N | Content |
 |---|---|
 | 0 | PyroCb flag, whether or not scene contains PyroCb |
 
-PyroCb_mask.zarr (Array shape = 1 x 200 x 200)
+PyroCb_mask.zarr (array shape = 1 x 200 x 200)
 | N | Content |
 |---|---|
 | 0 | PyroCb mask, classification of pixel types according to NRL PyroCb algorithm |
