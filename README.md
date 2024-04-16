@@ -40,6 +40,8 @@ PyroCb_mask.zarr (array shape = 1 x 200 x 200)
 
 Array shape = 18 x 200 x 200
 
+Only some dimensions have entries which depend on the satellite source.
+
 Himawari-8 
 | N | Channel wavelength [μm]|
 |---|---|
