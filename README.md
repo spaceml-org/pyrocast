@@ -22,4 +22,28 @@ Get in touch with jodie@fdl.ai to get access to the data on [Google Cloud Storag
 
 The data is in a [Zarr format](https://zarr.readthedocs.io/en/stable/), this allows us to load data that is associated to each hour of each day of each wildfire event using the ID numbers found in the `wildfire_events.csv` file. The data for the geostationary imagery, the pyrocast flags and masks and fuel and weather data each have their own Zarr directory.
 
-Extracting data from a zarr folder event will yield Nx200x200 cube where N corresponds to the different wavelength channels, climate fields, etc. These are detailed in the tables below.
+Extracting data from a zarr folder event will yield Nx200x200 cube where N corresponds to the different wavelength channels, climate fields, etc.. These are detailed in the tables below.
+
+### Flags and masks
+
+PyroCb_flags.zarr |
+
+| Dimension | Content |
+|---|---|
+| 0 | PyroCb flag, whether or not scene contains PyroCb |
+
+PyroCb_mask.zarr 
+| Dimension | Content |
+|---|---|
+| 0 | PyroCb mask, classification of pixel types according to NRL PyroCb algorithm |
+
+### Geostationary imagery
+
+| Dimension | Content |
+|---|---|
+
+
+### Weather and fuel
+
+| Dimension | Content |
+|---|---|
