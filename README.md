@@ -26,40 +26,41 @@ Extracting data from a zarr folder event will yield Nx200x200 cube where N corre
 
 ### Flags and masks
 
-PyroCb_flags.zarr |
-
-| Dimension | Content |
+PyroCb_flags.zarr (Array shape = 1)
+| N | Content |
 |---|---|
 | 0 | PyroCb flag, whether or not scene contains PyroCb |
 
-PyroCb_mask.zarr 
-| Dimension | Content |
+PyroCb_mask.zarr (Array shape = 1 x 200 x 200)
+| N | Content |
 |---|---|
 | 0 | PyroCb mask, classification of pixel types according to NRL PyroCb algorithm |
 
 ### Geostationary imagery
 
+Array shape = 18 x 200 x 200
+
 Himawari-8 
-| Dimension | Content |
+| N | Channel wavelength [μm]|
 |---|---|
-| 0| |
-| 2| |
-| 3| |
-| 6| | 
-|13| | 
-|15| | 
+| 0| 0.47| 
+| 2| 0.64|
+| 3| 0.86|
+| 6|  3.9|
+|13| 11.2| 
+|15| 13.3| 
 
 GOES-16 / GOES-17
-| Dimension | Content |
+| N | Channel wavelength [μm]|
 |---|---|
-| 0| |
-| 1| |
-| 2| |
-| 6| |
-|13| | 
-|15| | 
+| 0| 0.47| 
+| 1| 0.64|
+| 2| 0.86|
+| 6|  3.9|
+|13| 11.2| 
+|15| 13.3| 
 
 ### Weather and fuel
 
-| Dimension | Content |
+| N | Content |
 |---|---|
