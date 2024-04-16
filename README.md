@@ -39,9 +39,25 @@ PyroCb_mask.zarr
 
 ### Geostationary imagery
 
+Himawari-8 
 | Dimension | Content |
 |---|---|
+| 0| |
+| 2| |
+| 3| |
+| 6| | 
+|13| | 
+|15| | 
 
+GOES-16 / GOES-17
+| Dimension | Content |
+|---|---|
+| 0| |
+| 1| |
+| 2| |
+| 6| |
+|13| | 
+|15| | 
 
 ### Weather and fuel
 
