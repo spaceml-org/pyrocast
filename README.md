@@ -16,3 +16,10 @@ The code for this repository is currently incomplete, the authors are contributi
 ## Getting started
 
 Get in touch with jodie@fdl.ai to get access to the data on [Google Cloud Storage](https://console.cloud.google.com/storage/browser/eu-aerosols-spaceml).
+
+
+## Data
+
+The data is in a [Zarr format](https://zarr.readthedocs.io/en/stable/), this allows us to load data that is associated to each hour of each day of each wildfire event using the ID numbers found in the `wildfire_events.csv` file. The data for the geostationary imagery, the pyrocast flags and masks and fuel and weather data each have their own Zarr directory.
+
+Extracting data from a zarr folder event will yield Nx200x200 cube where N corresponds to the different wavelength channels, climate fields, etc. These are detailed in the tables below.
