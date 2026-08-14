@@ -3,7 +3,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from typing import Callable
-print("hsic2.py")
 
 
 #####################################################################################################
