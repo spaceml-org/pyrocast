@@ -3,9 +3,8 @@ import numpy as np
 from gcsfs import GCSFileSystem
 import os
 import copy
-import numpy as np
 import pandas as pd
-from pysolar.solar import pys
+from pysolar.solar import get_altitude
 from datetime import datetime, timedelta, timezone
 import logging
 
@@ -83,17 +82,35 @@ def pyro_detection(dataset_cubes: np.array, datetime_list: list, lat: float, lon
         pass_cloud_microphysics_test[0, :, :] = (tmp1[0, :, :] > 50.0) &\
             (pass_cloud_opacity_test[0, :, :])
         if (~np.any(pass_cloud_microphysics_test)):
-            logging.info(path + ' did not pass cloud microphysics test')
+            logging.info('did not pass cloud microphysics test')
             pyrocb_flag_mask.append(where_pyrocb_flag)
             continue
         else:
             where_pyrocb_flag[2, np.where(pass_cloud_microphysics_test)[
                 1], np.where(pass_cloud_microphysics_test)[2]] = True
-            logging.info(path + ' - we have a PyroCb!')
+            logging.info('we have a PyroCb!')
             pyrocb_flag_mask.append(where_pyrocb_flag)
             pyrocb_flag[i, 4] = True
 
     return pyrocb_flag, pyrocb_flag_mask
+
+
+def get_full_flag(flag_array):
+    """Convert a boolean flag array into a single integer state.
+
+    Scans the flag array in reverse and returns the index of the first True
+    value (relative to the end). Returns 0 if no flags are set.
+
+    Args:
+        flag_array: 1-D boolean array of NRL detection flags
+
+    Returns:
+        int: 0 if no flags set, otherwise (len - 1 - first_true_from_end)
+    """
+    idx, = np.where(flag_array[::-1])
+    if len(idx) == 0:
+        return 0
+    return len(flag_array) - 1 - idx[0]
 
 
 def output_zarr(pyrocb_flag, pyrocb_flag_mask, datetime_list, event_id):
@@ -154,7 +171,7 @@ def create_datetime_list(date, frequency=10.0):
 
 def datetime_to_sza(lat, lon, dt):
     dobj = dt.replace(tzinfo=timezone.utc)
-    sza = float(90) - pys.get_altitude(lat, lon, dobj)
+    sza = float(90) - get_altitude(lat, lon, dobj)
     return sza
 
 
