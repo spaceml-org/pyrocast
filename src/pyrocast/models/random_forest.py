@@ -1,6 +1,6 @@
 from sklearn.ensemble import RandomForestClassifier
-import utils.data.dataprep as dp
-from utils import metrics
+from pyrocast.utils.data import dataprep as dp
+from pyrocast.utils import metrics
 import numpy as np
 import joblib
 
@@ -8,13 +8,15 @@ import joblib
 class RandomForest(RandomForestClassifier):
     """ SciKit Learn model initalised with paper hyperparameters"""
     def __init__(self, n_estimators=500, max_depth=10, class_weight="balanced_subsample", random_state=0):
-        self.n_estimators = n_estimators
-        self.max_depth = max_depth
-        self.class_weight = class_weight
-        self.random_state = random_state
+        super().__init__(
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            class_weight=class_weight,
+            random_state=random_state,
+        )
 
 
-if __name__ in "___main__":
+if __name__ == "__main__":
     # Load datacubes (you can dowload these from the Pyrocast database)
     geo_cubes = np.load('')
     env_cubes = np.load('')

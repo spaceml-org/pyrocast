@@ -1,5 +1,5 @@
-import utils.data.dataprep as dp
-from utils import metrics
+from pyrocast.utils.data import dataprep as dp
+from pyrocast.utils import metrics
 from torch import nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -7,11 +7,11 @@ import torch
 import numpy as np
 
 
-class CNN():
+class CNN(nn.Module):
     """ CNN pyroCb forecast model """
 
-    def __init__(self):
-        super().__init__(n_channels)
+    def __init__(self, n_channels):
+        super().__init__()
         self.conv1 = nn.Conv2d(n_channels, 6, 5)
         self.pool = nn.MaxPool2d(2, 2)
         self.conv2 = nn.Conv2d(6, 16, 5)
@@ -29,11 +29,11 @@ class CNN():
         return x
 
 
-if __name__ in "__main__":
+if __name__ == "__main__":
 
     # Load data
     trainloader, testloader = dp.load_loaders()
-    n_channels = trainloader
+    n_channels = 6
 
     # Initialise model
     cnn = CNN(n_channels)
@@ -54,7 +54,7 @@ if __name__ in "__main__":
         for i, data in enumerate(trainloader, 0):
             # get the inputs; data is a list of [inputs, labels]
             inputs, labels=data
-            print(input.shape)
+            print(inputs.shape)
             inputs=inputs.type(torch.DoubleTensor)
             labels=labels.type(torch.DoubleTensor)
             inputs=inputs.to(device)

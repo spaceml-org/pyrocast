@@ -1,5 +1,5 @@
-import utils.data.dataprep  as dp
-from utils import metrics
+from pyrocast.utils.data import dataprep as dp
+from pyrocast.utils import metrics
 from torch import nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -140,7 +140,7 @@ class Decoder(nn.Module):
         return x
 
 
-if __name__ in "__main__":
+if __name__ == "__main__":
 
     encoder = Encoder(num_channels_in)
     encoder = encoder.double()
