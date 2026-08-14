@@ -23,7 +23,7 @@ months = ['01', '02', '03',
           '07', '08', '09',
           '10', '11', '12']
 
-days = ['01', '02', '03'
+days = ['01', '02', '03',
         '04', '05', '06',
         '07', '08', '09',
         '10', '11', '12',
@@ -162,7 +162,7 @@ def download_single_lvl_variables(years: list, months: list, days: list, times: 
                 system(del_command)
 
 
-def download_single_lvl_variables(years: list, months: list, days: list, times: list,
+def download_fuel_variables(years: list, months: list, days: list, times: list,
                                   areas: list, area_dict: dict, fuel_variables: list):
     """
     Download single level variables and copies data to Google Cloud Storage Bucket.
