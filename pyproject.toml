@@ -38,10 +38,16 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "black",
+    "pre-commit",
     "pytest",
     "jupyter",
     "matplotlib",
 ]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
