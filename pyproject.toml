@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyrocast"
+version = "0.1.0"
+description = "End-to-end ML pipeline for prediction of extreme wildfires and pyrocumulonimbus clouds"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+]
+dependencies = [
+    "cdsapi",
+    "fsspec",
+    "gcsfs",
+    "google-cloud-storage",
+    "jax",
+    "jaxlib",
+    "joblib",
+    "numpy",
+    "pandas",
+    "pysolar",
+    "scikit-learn",
+    "scipy",
+    "torch",
+    "torchvision",
+    "tqdm",
+    "xarray",
+    "zarr",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "jupyter",
+    "matplotlib",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
