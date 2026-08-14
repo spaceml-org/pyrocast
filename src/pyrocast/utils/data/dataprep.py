@@ -2,7 +2,18 @@
 import torchvision.transforms as transforms
 import torch
 import numpy as np
-import utils.data.cube_matching as cm
+import pyrocast.utils.data.cube_matching as cm
+
+
+def flatten(lst):
+    """Flatten a nested list into a single list."""
+    result = []
+    for item in lst:
+        if isinstance(item, (list, tuple)):
+            result.extend(flatten(item))
+        else:
+            result.append(item)
+    return result
 
 
 class HimawariDataset(torch.utils.data.Dataset):

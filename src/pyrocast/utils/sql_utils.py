@@ -17,30 +17,19 @@ logging.basicConfig(level=loglevel, format=logfmt)
 def insert_into_dataset(pyroCb_id, piece_id, band, date_idx, success, opts):
     client = bigquery.Client()
 
-    query = "UPDATE {}.fires".format(opts.bigquery)
+    query = "UPDATE {}.fires SET status = @success WHERE piece_id > 0 AND pyroCb_id = @pyroCb_id AND piece_id = @piece_id AND band = @band AND date_idx = @date_idx ORDER BY pyroCb_id, piece_id, date_idx, band, status".format(opts.bigquery)
 
-    query += " SET status = '{}'".format(success)
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("success", "STRING", success),
+            bigquery.ScalarQueryParameter("pyroCb_id", "INT64", pyroCb_id),
+            bigquery.ScalarQueryParameter("piece_id", "INT64", piece_id),
+            bigquery.ScalarQueryParameter("band", "INT64", band),
+            bigquery.ScalarQueryParameter("date_idx", "INT64", date_idx),
+        ]
+    )
 
-    clause = "WHERE piece_id > 0"
-
-    clause += " AND pyroCb_id = {} ".format(pyroCb_id)
-    clause += " AND piece_id = {} ".format(piece_id)
-    clause += " AND band = {} ".format(band)
-    clause += " AND date_idx = {} ".format(date_idx)
-
-    sort_clause = """
-        ORDER BY 
-            pyroCb_id, 
-            piece_id, 
-            date_idx,
-            band,
-            status
-                  """
-
-    query = query + clause + sort_clause
-
-    query_job = client.query(query)  # API request
-    # query_job.result()  # Waits for statement to finish
+    query_job = client.query(query, job_config=job_config)
 
 
 def create_dataset(dataset_id, region_name):
@@ -175,23 +164,23 @@ def checkdate(curryear, currmonth, currday, opyear, opmonth, opday):
 
 
 def checkdatetime(curryear, currmonth, currday, currhour, opyear, opmonth, opday, ophour):
-    # check whether the date is before or after the satellite became operational
-    # currday,currmonth,currday - the date we want
-    # opyear,opmonth,opday - the date the satellite became operational
-
     if curryear > opyear:
         return True
     elif curryear == opyear:
         if currmonth > opmonth:
             return True
         elif currmonth == opmonth:
-            if currday >= opday:
+            if currday > opday:
                 return True
             elif currday == opday:
                 if currhour >= ophour:
                     return True
                 else:
                     return False
+            else:
+                return False
+        else:
+            return False
     else:
         return False
 

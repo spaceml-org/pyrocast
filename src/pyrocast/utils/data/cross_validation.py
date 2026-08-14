@@ -1,5 +1,6 @@
 from sklearn.cluster import KMeans
 import numpy as np
+import pandas as pd
 
 
 def make_clusters(seg_base, num_clusters: int, type:str, seed:int=42):
@@ -28,7 +29,7 @@ def make_clusters(seg_base, num_clusters: int, type:str, seed:int=42):
         N = seg_base2.shape[0]
         cluster_size = N//num_clusters
         print("cluster size: ", cluster_size)
-        abs = -1*np.ones(N)
+        labs = -1*np.ones(N)
         kmeans = KMeans(n_clusters=num_clusters, random_state=0).fit(seg_base2)
         grps = kmeans.labels_
         ids, cnt = np.unique(grps, return_counts=True)
