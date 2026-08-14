@@ -6,8 +6,15 @@ import joblib
 
 
 class RandomForest(RandomForestClassifier):
-    """ SciKit Learn model initalised with paper hyperparameters"""
-    def __init__(self, n_estimators=500, max_depth=10, class_weight="balanced_subsample", random_state=0):
+    """SciKit Learn model initalised with paper hyperparameters"""
+
+    def __init__(
+        self,
+        n_estimators=500,
+        max_depth=10,
+        class_weight="balanced_subsample",
+        random_state=0,
+    ):
         super().__init__(
             n_estimators=n_estimators,
             max_depth=max_depth,
@@ -18,13 +25,13 @@ class RandomForest(RandomForestClassifier):
 
 if __name__ == "__main__":
     # Load datacubes (you can dowload these from the Pyrocast database)
-    geo_cubes = np.load('')
-    env_cubes = np.load('')
-    flag_cubes = np.load('')
+    geo_cubes = np.load("")
+    env_cubes = np.load("")
+    flag_cubes = np.load("")
     xtrain, ytrain, xtest, ytest = dp.load_rfdata()
     rf = RandomForest()
     rf.fit(xtrain, ytrain)
-    joblib.dump(rf, 'models/instances/test_rf.joblib')
+    joblib.dump(rf, "models/instances/test_rf.joblib")
     ypred = rf.predict()
     auc = metrics.auc(ytest, ypred)
     print(auc)

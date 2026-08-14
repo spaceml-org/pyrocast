@@ -23,17 +23,19 @@ from utils.sql_utils import *
 def prepare_zarr(bucket, outdir, df, num_days, num_bands, freq_smpl):
     # df : the dataframe with the wildfires
 
-    wildfirepieces = df['wildfire_piece_id']
+    wildfirepieces = df["wildfire_piece_id"]
     event_ids = wildfirepieces.values.tolist()
-    OUTPUT_DIR = 'gs://{}/{}/'.format(bucket, outdir)
+    OUTPUT_DIR = "gs://{}/{}/".format(bucket, outdir)
 
-    gcp_prepare_archive(event_ids,
-                        OUTPUT_DIR,
-                        n_jobs=-1,
-                        verbose=0,
-                        patch_size=200,
-                        timesteps=(60/freq_smpl)*24*num_days,
-                        bands=num_bands)
+    gcp_prepare_archive(
+        event_ids,
+        OUTPUT_DIR,
+        n_jobs=-1,
+        verbose=0,
+        patch_size=200,
+        timesteps=(60 / freq_smpl) * 24 * num_days,
+        bands=num_bands,
+    )
 
 
 @contextlib.contextmanager
@@ -57,7 +59,9 @@ def tqdm_joblib(tqdm_object):
         tqdm_object.close()
 
 
-def create_zarr_structure(fs_mapper, storage_root, event_id, timesteps=12*24*2, patch_size=200, bands=6):
+def create_zarr_structure(
+    fs_mapper, storage_root, event_id, timesteps=12 * 24 * 2, patch_size=200, bands=6
+):
     """
 
     :param str storage_path: The path to the zarr array
@@ -87,7 +91,7 @@ def gcp_prepare_archive(
     n_jobs: int = -1,
     verbose: int = 0,
     patch_size=200,
-    timesteps=12*24*2,
+    timesteps=12 * 24 * 2,
     bands=20,
     **kwargs,
 ) -> bool:
@@ -102,16 +106,19 @@ def gcp_prepare_archive(
     with tqdm_joblib(
         tqdm(
             desc=f"parallel building zarr tile roots on {storage_root}",
-            total=len(event_ids))):
+            total=len(event_ids),
+        )
+    ):
         Parallel(n_jobs=n_jobs, verbose=verbose, prefer="threads")(
             [
-                delayed(zarr.open)(fs.get_mapper(
-                    os.path.join(storage_root, event_id)), "a")
+                delayed(zarr.open)(
+                    fs.get_mapper(os.path.join(storage_root, event_id)), "a"
+                )
                 for event_id in event_ids
             ],
         )
 
-    #logger.info(f"parallel building zarr archives on {storage_root}")
+    # logger.info(f"parallel building zarr archives on {storage_root}")
     jobs = []
     for event_id in event_ids:
         jobs.append(
@@ -121,7 +128,7 @@ def gcp_prepare_archive(
                 event_id,
                 timesteps=timesteps,
                 patch_size=patch_size,
-                bands=bands
+                bands=bands,
             ),
         )
 
@@ -136,9 +143,8 @@ def gcp_prepare_archive(
 if __name__ in "__main__":
 
     fs = fsspec.filesystem("gs")
-    conn = fs.open(
-        "eu-aerosols-dev-features/wildfires_to_extract/wildfires.pkl")
-    #wildfires = pd.read_csv(wildfires)
+    conn = fs.open("eu-aerosols-dev-features/wildfires_to_extract/wildfires.pkl")
+    # wildfires = pd.read_csv(wildfires)
     wildfires = pickle5.load(conn)  # open( wildfires, "rb" )
 
     # transform into a wildfire piece dataframew with one chunk of time (1 day), location
@@ -149,8 +155,7 @@ if __name__ in "__main__":
     num_bands = 19
     freq_smpl = 60  # units in minutes
 
-    bucket = 'eu-aerosols-landing'
-    outdir = 'ERA5/crop_data2'
+    bucket = "eu-aerosols-landing"
+    outdir = "ERA5/crop_data2"
 
-    prepare_zarr(bucket, outdir, wildfire_pieces,
-                 num_days, num_bands, freq_smpl)
+    prepare_zarr(bucket, outdir, wildfire_pieces, num_days, num_bands, freq_smpl)

@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 
-def make_clusters(seg_base, num_clusters: int, type:str, seed:int=42):
+def make_clusters(seg_base, num_clusters: int, type: str, seed: int = 42):
     """
     Make equal-sized clusters using k-means clustering.
 
@@ -16,20 +16,21 @@ def make_clusters(seg_base, num_clusters: int, type:str, seed:int=42):
     Returns:
         seg_base
     """
-    if type == 'random':
-        rnds = np.floor(np.arange(0, seg_base.shape[0])/17).astype(int)
+    if type == "random":
+        rnds = np.floor(np.arange(0, seg_base.shape[0]) / 17).astype(int)
         seg_base["cluster_random"] = np.array(rnds).astype(int)
         return seg_base
-    
-    if type == 'regional':
+
+    if type == "regional":
         np.random.seed(seed=seed)
         seg_base2 = seg_base[["sat", "lon", "lat"]].to_numpy()
-        seg_base2 = np.array([zscore(seg_base2[:, i])
-                         for i in range(seg_base2.shape[1])]).T
+        seg_base2 = np.array(
+            [zscore(seg_base2[:, i]) for i in range(seg_base2.shape[1])]
+        ).T
         N = seg_base2.shape[0]
-        cluster_size = N//num_clusters
+        cluster_size = N // num_clusters
         print("cluster size: ", cluster_size)
-        labs = -1*np.ones(N)
+        labs = -1 * np.ones(N)
         kmeans = KMeans(n_clusters=num_clusters, random_state=0).fit(seg_base2)
         grps = kmeans.labels_
         ids, cnt = np.unique(grps, return_counts=True)
@@ -43,7 +44,7 @@ def make_clusters(seg_base, num_clusters: int, type:str, seed:int=42):
 
         # loop through clusters from smallest to largest
         for i in range(len(indx_obs)):
-            #print("i: ", i)
+            # print("i: ", i)
             o2 = np.argsort(DistMat[indx_obs, indx_cluster[0]])
             indx_lab = np.array(indx_obs)[o2[0]]
             labs[indx_lab] = indx_cluster[0]
@@ -59,4 +60,4 @@ def make_clusters(seg_base, num_clusters: int, type:str, seed:int=42):
 
 
 def zscore(x):
-    return (x-np.mean(x))/np.std(x)
+    return (x - np.mean(x)) / np.std(x)

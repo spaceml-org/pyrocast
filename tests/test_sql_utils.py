@@ -60,12 +60,15 @@ class TestGetsatellite:
 class TestGetscanmode:
     def test_himawari_returns_none(self):
         from datetime import datetime
+
         assert getscanmode(datetime(2020, 1, 1, 12), "Himawari") is None
 
     def test_goes_mode6_after_cutover(self):
         from datetime import datetime
+
         assert getscanmode(datetime(2020, 1, 1, 12), "GOES16") == 6
 
     def test_goes_mode3_before_cutover(self):
         from datetime import datetime
+
         assert getscanmode(datetime(2018, 1, 1, 12), "GOES16") == 3

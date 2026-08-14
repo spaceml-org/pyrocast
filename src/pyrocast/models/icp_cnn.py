@@ -28,7 +28,9 @@ from pyrocast.icp.hsic import centering, hsicRBF
 class ICPDataset(torch.utils.data.Dataset):
     """Dataset that returns (image, environment_variables, label)."""
 
-    def __init__(self, dataset_cubes, envs, flags, transform=None, target_transform=None):
+    def __init__(
+        self, dataset_cubes, envs, flags, transform=None, target_transform=None
+    ):
         self.img_labels = flags
         self.img_cubes = dataset_cubes
         self.envs = envs
@@ -133,8 +135,23 @@ def evaluate_auc(loader, encoder, head, device):
     return roc_auc_score(y_true, y_pred)
 
 
-def train_icp_cnn(encoder, head, optimizer, criterion, lam, trainloader, testloader,
-                   n_epochs, save_dir, file_tag, version, fold, rep, device, seed):
+def train_icp_cnn(
+    encoder,
+    head,
+    optimizer,
+    criterion,
+    lam,
+    trainloader,
+    testloader,
+    n_epochs,
+    save_dir,
+    file_tag,
+    version,
+    fold,
+    rep,
+    device,
+    seed,
+):
     """
     Train the ICP CNN (encoder + head) with checkpointing.
 
@@ -161,9 +178,15 @@ def train_icp_cnn(encoder, head, optimizer, criterion, lam, trainloader, testloa
     os.makedirs(os.path.join(save_dir, "losses"), exist_ok=True)
     os.makedirs(os.path.join(save_dir, "nn_weights"), exist_ok=True)
 
-    loss_path = os.path.join(save_dir, "losses", f"losses_{file_tag}_{version}_f{fold}_r{rep}.pkl")
-    weights1_path = os.path.join(save_dir, "nn_weights", f"net1_{file_tag}_{version}_f{fold}_r{rep}")
-    weights2_path = os.path.join(save_dir, "nn_weights", f"net2_{file_tag}_{version}_f{fold}_r{rep}")
+    loss_path = os.path.join(
+        save_dir, "losses", f"losses_{file_tag}_{version}_f{fold}_r{rep}.pkl"
+    )
+    weights1_path = os.path.join(
+        save_dir, "nn_weights", f"net1_{file_tag}_{version}_f{fold}_r{rep}"
+    )
+    weights2_path = os.path.join(
+        save_dir, "nn_weights", f"net2_{file_tag}_{version}_f{fold}_r{rep}"
+    )
 
     if os.path.exists(loss_path):
         with open(loss_path, "rb") as f:
@@ -187,7 +210,9 @@ def train_icp_cnn(encoder, head, optimizer, criterion, lam, trainloader, testloa
             optimizer.zero_grad()
             zs = encoder(inputs)
             outputs, _, _ = head(zs, envs)
-            loss = criterion(outputs, zs, labels, lam, head.fc1a.weight[:, 8:13], device)
+            loss = criterion(
+                outputs, zs, labels, lam, head.fc1a.weight[:, 8:13], device
+            )
 
             hsic_val, _, _ = hsicRBF(zs[:, 0, :], zs[:, 1, :], device)
             ce = nn.CrossEntropyLoss()(outputs, labels)
@@ -216,8 +241,10 @@ def train_icp_cnn(encoder, head, optimizer, criterion, lam, trainloader, testloa
         auc_tr.append(auc_train)
         auc_te.append(auc_test)
 
-        with open(loss_path, 'wb') as f:
-            pickle.dump((losses, ces, hsics, auc_tr, auc_te), f, pickle.HIGHEST_PROTOCOL)
+        with open(loss_path, "wb") as f:
+            pickle.dump(
+                (losses, ces, hsics, auc_tr, auc_te), f, pickle.HIGHEST_PROTOCOL
+            )
         torch.save(encoder.state_dict(), weights1_path)
         torch.save(head.state_dict(), weights2_path)
 

@@ -8,7 +8,7 @@ import numpy as np
 
 
 class CNN(nn.Module):
-    """ CNN pyroCb forecast model """
+    """CNN pyroCb forecast model"""
 
     def __init__(self, n_channels):
         super().__init__()
@@ -43,52 +43,52 @@ if __name__ == "__main__":
     # Train
 
     # Load data onto GPU
-    device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     cnn.to(device)
 
-    n_epochs=100
-    losses=np.zeros((n_epochs,)).astype(float)
+    n_epochs = 100
+    losses = np.zeros((n_epochs,)).astype(float)
     for epoch in range(n_epochs):  # loop over the dataset multiple times
 
-        running_loss=0.0
+        running_loss = 0.0
         for i, data in enumerate(trainloader, 0):
             # get the inputs; data is a list of [inputs, labels]
-            inputs, labels=data
+            inputs, labels = data
             print(inputs.shape)
-            inputs=inputs.type(torch.DoubleTensor)
-            labels=labels.type(torch.DoubleTensor)
-            inputs=inputs.to(device)
-            labels=labels.to(device)
+            inputs = inputs.type(torch.DoubleTensor)
+            labels = labels.type(torch.DoubleTensor)
+            inputs = inputs.to(device)
+            labels = labels.to(device)
 
             # zero the parameter gradients
             optimizer.zero_grad()
 
             # forward + backward + optimize
-            outputs=cnn(inputs)
+            outputs = cnn(inputs)
 
-            outputs=outputs.squeeze(1)
+            outputs = outputs.squeeze(1)
             # outputs = outputs.type(torch.LongTensor)
             # labels = labels.type(torch.LongTensor)
-            loss=criterion(outputs, labels)
+            loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
 
             # print statistics
             running_loss += loss.item()
-            if i % 100 == 0:    # print every 2000 mini-batches
+            if i % 100 == 0:  # print every 2000 mini-batches
                 # print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 2000:.3f}')
-                print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss:.6f}')
-                running_loss=0.0
-        losses[epoch]=loss.item()
+                print(f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss:.6f}")
+                running_loss = 0.0
+        losses[epoch] = loss.item()
 
     # Test
-    y_pred=[]
-    y_true=[]
+    y_pred = []
+    y_true = []
 
     for i, (inputs, targets) in enumerate(testloader, 0):
         y_true.extend(targets.cpu().detach().numpy())
-        yhat=cnn(inputs.to(device))
+        yhat = cnn(inputs.to(device))
         y_pred.extend(yhat.cpu().detach().numpy())
 
-    auc=metrics.auc(y_true, y_pred)
-    print('AUC', auc)
+    auc = metrics.auc(y_true, y_pred)
+    print("AUC", auc)

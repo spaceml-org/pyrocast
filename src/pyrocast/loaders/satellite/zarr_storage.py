@@ -13,7 +13,9 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
-def store_patch(fs_mapper, patch, patchlon, patchlat, storage_path, event_id, band_idx, dt_idx):
+def store_patch(
+    fs_mapper, patch, patchlon, patchlat, storage_path, event_id, band_idx, dt_idx
+):
     """
     Store a satellite patch into a pre-allocated zarr array.
 
@@ -51,7 +53,11 @@ def format_sql_date(dt_str):
     date_parts = parts[0].split("-")
     time_parts = parts[1].split(":")
     return datetime(
-        int(date_parts[0]), int(date_parts[1]), int(date_parts[2]),
-        int(time_parts[0]), int(time_parts[1]), int(time_parts[2]),
+        int(date_parts[0]),
+        int(date_parts[1]),
+        int(date_parts[2]),
+        int(time_parts[0]),
+        int(time_parts[1]),
+        int(time_parts[2]),
         tzinfo=timezone.utc,
     )

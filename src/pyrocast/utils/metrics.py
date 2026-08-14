@@ -29,4 +29,3 @@ def classification_report(y_true, y_pred_proba, threshold=0.5):
         "fnr": fnr,
         "roc_curve": {"fpr": fpr_curve, "tpr": tpr_curve},
     }
-
