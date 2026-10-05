@@ -439,6 +439,36 @@ def build_sample_index(cfg: DataConfig, mode: Mode) -> pd.DataFrame:
     return _samples(build_hourly_flags(cfg), cfg, mode)
 
 
+def drop_duplicate_scenes(hourly: pd.DataFrame) -> pd.DataFrame:
+    """
+    Keep one event per scene.
+
+    PyroCb events of the same wildfire share its imagery: their pieces of one day
+    cover the same location and hours with identical cubes. Of the events with
+    the same longitude, latitude and first hour, only the one with the lowest
+    fire id (then piece) is kept, so each scene is counted once, as in the
+    Pyrocast papers.
+
+    Args:
+        hourly: hourly flags with event_id, fire_id, longitude, latitude, datetime
+
+    Returns:
+        the rows of the kept events
+    """
+    events = hourly.groupby("event_id").agg(
+        fire_id=("fire_id", "first"),
+        longitude=("longitude", "first"),
+        latitude=("latitude", "first"),
+        start=("datetime", "min"),
+    )
+    events["piece"] = events.index.str.split("_").str[-1].astype(int)
+    events = events.sort_values(["fire_id", "piece"])
+    keep = events.drop_duplicates(["longitude", "latitude", "start"]).index
+    if len(keep) < len(events):
+        logging.info("Dropping %d duplicate scenes", len(events) - len(keep))
+    return hourly[hourly.event_id.isin(keep)]
+
+
 def _samples(hourly: pd.DataFrame, cfg: DataConfig, mode: Mode) -> pd.DataFrame:
     """Select the configured events from the hourly flags and match samples."""
     wildfires = read_wildfires(cfg.events_path)
@@ -448,6 +478,7 @@ def _samples(hourly: pd.DataFrame, cfg: DataConfig, mode: Mode) -> pd.DataFrame:
     hourly = hourly.join(wildfires, on="fire_id")
     if cfg.countries is not None:
         hourly = hourly[hourly.country.isin(cfg.countries)]
+    hourly = drop_duplicate_scenes(hourly)
     if cfg.max_events is not None:
         keep = sorted(hourly.event_id.unique())[: cfg.max_events]
         hourly = hourly[hourly.event_id.isin(keep)]
