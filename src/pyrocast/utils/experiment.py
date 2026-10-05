@@ -77,7 +77,5 @@ def cross_validate(
             index.label.iloc[test].sum(),
         )
         prob = fit_predict(train, test, fold)
-        frames.append(
-            index.iloc[test][PREDICTION_COLUMNS].assign(fold=fold, prob=prob)
-        )
+        frames.append(index.iloc[test][PREDICTION_COLUMNS].assign(fold=fold, prob=prob))
     return pd.concat(frames, ignore_index=True)
