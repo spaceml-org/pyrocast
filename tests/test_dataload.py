@@ -174,3 +174,32 @@ def test_read_wildfires(data_cfg):
     assert wildfires.loc[1, "wildfire_id"] == "W1"
     assert wildfires.loc[2, "wildfire_id"] == "pyrocb_2"
     assert wildfires.loc[4, "country"] == "Russia"
+
+
+def test_drop_duplicate_scenes():
+    from pyrocast.utils.data.dataload import drop_duplicate_scenes
+
+    def event(event_id, fire_id, lon, start):
+        return pd.DataFrame(
+            {
+                "event_id": event_id,
+                "fire_id": fire_id,
+                "longitude": lon,
+                "latitude": -30.0,
+                "datetime": pd.date_range(start, periods=3, freq="h"),
+            }
+        )
+
+    hourly = pd.concat(
+        [
+            event("12_3", 12, 150.0, "2020-01-01 20:00"),
+            event("7_10", 7, 150.0, "2020-01-01 20:00"),  # same scene, lower fire
+            event("7_2", 7, 150.0, "2020-01-01 20:00"),  # same fire, lower piece
+            event("7_11", 7, 150.0, "2020-01-02 20:00"),  # next day
+            event("8_1", 8, 151.0, "2020-01-01 20:00"),  # elsewhere
+        ],
+        ignore_index=True,
+    )
+    kept = drop_duplicate_scenes(hourly)
+    assert sorted(kept.event_id.unique()) == ["7_11", "7_2", "8_1"]
+    assert len(kept) == 9
