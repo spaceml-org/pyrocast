@@ -20,13 +20,17 @@ dependencies = [
     "cdsapi",
     "fsspec",
     "gcsfs",
+    "google-cloud-bigquery",
     "google-cloud-storage",
     "jax",
     "jaxlib",
     "joblib",
     "numpy",
     "pandas",
+    "pydantic>=2",
     "pysolar",
+    "pyyaml",
+    "pytz",
     "scikit-learn",
     "scipy",
     "torch",
@@ -35,6 +39,10 @@ dependencies = [
     "xarray",
     "zarr",
 ]
+
+[project.scripts]
+pyrocast-train-rf = "pyrocast.models.random_forest:main"
+pyrocast-train-cnn = "pyrocast.models.cnn:main"
 
 [project.optional-dependencies]
 dev = [
@@ -48,6 +56,9 @@ dev = [
 [tool.black]
 line-length = 88
 target-version = ["py310"]
+
+[tool.pytest.ini_options]
+markers = ["slow: end-to-end tests that train a model (deselect with '-m \"not slow\"')"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
