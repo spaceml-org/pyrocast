@@ -83,7 +83,7 @@ def hsicRBF(x, z, device):
 
 # Squared Euclidean Distance Formula
 @jax.jit
-def sqeuclidean_distance(x: np.ndarray, y: np.ndarray) -> jnp.DeviceArray:
+def sqeuclidean_distance(x: np.ndarray, y: np.ndarray) -> jax.Array:
     """
         Calculates the euclidean distance between two vectors
     Args:
@@ -173,7 +173,7 @@ def centering_jax(K: jnp.ndarray) -> jnp.ndarray:
 
 
 @jax.jit
-def hsicRBF_jax(x: np.ndarray, z: np.ndarray) -> jnp.DeviceArray:
+def hsicRBF_jax(x: np.ndarray, z: np.ndarray) -> jax.Array:
     """
      Obtain Hilbert Schmidt Independence Criterion for features x and z using rbf
      kernel with lengthscale determined with median heuristic
