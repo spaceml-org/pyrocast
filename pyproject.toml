@@ -25,6 +25,7 @@ dependencies = [
     "jax",
     "jaxlib",
     "joblib",
+    "matplotlib",
     "numpy",
     "pandas",
     "pydantic>=2",
@@ -43,6 +44,9 @@ dependencies = [
 [project.scripts]
 pyrocast-train-rf = "pyrocast.models.random_forest:main"
 pyrocast-train-cnn = "pyrocast.models.cnn:main"
+pyrocast-features = "pyrocast.utils.data.features:main"
+pyrocast-icp = "pyrocast.icp.icp:main"
+pyrocast-paper-report = "pyrocast.paper:main_report"
 
 [project.optional-dependencies]
 dev = [
@@ -50,7 +54,6 @@ dev = [
     "pre-commit",
     "pytest",
     "jupyter",
-    "matplotlib",
 ]
 
 [tool.black]
