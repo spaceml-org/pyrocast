@@ -8,6 +8,12 @@ import pandas as pd
 import numpy as np
 import logging
 import glob
+from pathlib import Path
+
+from joblib import Parallel, delayed
+
+from pyrocast.config import DataConfig, Inputs, Mode
+import pyrocast.utils.data.cube_matching as cm
 
 # uncomment if you are working from Google Cloud Console
 # from google.cloud import storage
@@ -258,3 +264,272 @@ def getERA5Cube(data_key, data_files, i, era5_root):
     datacube = np.nan_to_num(datacube)
 
     return datacube
+
+
+GEO_CHANNELS = {
+    "Himawari": [0, 2, 3, 6, 13, 15],
+    "GOES16": [0, 1, 2, 6, 13, 15],
+    "GOES17": [0, 1, 2, 6, 13, 15],
+}
+N_ERA5_CHANNELS = 19
+HOURLY_COLUMNS = [
+    "event_id",
+    "fire_id",
+    "date_idx",
+    "datetime",
+    "satellite",
+    "longitude",
+    "latitude",
+    "flag",
+    "nrl_state",
+]
+
+
+def read_event_table(snapshots_path: Path) -> pd.DataFrame:
+    """
+    Read one row per wildfire piece from the snapshots CSV.
+
+    Args:
+        snapshots_path: path to wildfire_snapshots.csv
+
+    Returns:
+        DataFrame indexed by event_id with fire_id, start, satellite, longitude
+        and latitude, where start is the snapshot of the first date index.
+    """
+    df = pd.read_csv(
+        snapshots_path,
+        usecols=[
+            "pyrocb_id",
+            "wildfire_piece_id",
+            "longitude",
+            "latitude",
+            "snapshot",
+            "date_idx",
+            "satellite",
+        ],
+    )
+    first = df.sort_values("date_idx").groupby("wildfire_piece_id").first()
+    first = first.rename(columns={"pyrocb_id": "fire_id", "snapshot": "start"})
+    first.index.name = "event_id"
+    return first[["fire_id", "start", "satellite", "longitude", "latitude"]]
+
+
+def read_wildfires(events_path: Path) -> pd.DataFrame:
+    """
+    Read the wildfire and country of each pyroCb event.
+
+    PyroCb events that were not matched to a GlobFire wildfire form a wildfire
+    of their own, as in the Pyrocast papers.
+
+    Args:
+        events_path: path to pyrocb_events.csv
+
+    Returns:
+        DataFrame indexed by fire_id (the pyroCb id) with columns wildfire_id
+        (str) and country
+    """
+    df = pd.read_csv(
+        events_path,
+        usecols=["pyroCb_id", "wildfire_id", "country"],
+        dtype={"wildfire_id": str},
+    )
+    df["wildfire_id"] = df.wildfire_id.fillna("pyrocb_" + df.pyroCb_id.astype(str))
+    return df.rename(columns={"pyroCb_id": "fire_id"}).set_index("fire_id")
+
+
+def _open_array(path: Path) -> zarr.Array:
+    return zarr.open_array(str(path), mode="r")
+
+
+def _has_valid_cubes(cfg: DataConfig, event_id: str) -> bool:
+    try:
+        geo = _open_array(cfg.geostationary_path / event_id / "data")
+        era5 = _open_array(cfg.era5_path / event_id / "data")
+    except (FileNotFoundError, ValueError, KeyError, zarr.errors.BaseZarrError):
+        return False
+    return geo.shape[1] > max(max(c) for c in GEO_CHANNELS.values()) and (
+        era5.shape[1] == N_ERA5_CHANNELS
+    )
+
+
+def available_events(cfg: DataConfig) -> list[str]:
+    """
+    List events present in the snapshots table and all three stores.
+
+    Events whose cubes cannot be opened or have too few channels are skipped.
+
+    Args:
+        cfg: data configuration
+
+    Returns:
+        sorted event ids from cfg.countries if set, truncated to cfg.max_events
+        if set
+    """
+    stores = [cfg.geostationary_path, cfg.era5_path, cfg.flags_path]
+    table = read_event_table(cfg.snapshots_path)
+    if cfg.countries is not None:
+        country = table.fire_id.map(read_wildfires(cfg.events_path).country)
+        table = table[country.isin(cfg.countries)]
+    candidates = set(table.index)
+    for store in stores:
+        candidates &= {p.name for p in store.iterdir() if p.is_dir()}
+    events = []
+    for event_id in sorted(candidates):
+        if _has_valid_cubes(cfg, event_id):
+            events.append(event_id)
+        else:
+            logging.warning("Skipping event with invalid cubes: %s", event_id)
+        if cfg.max_events is not None and len(events) == cfg.max_events:
+            break
+    return events
+
+
+def _event_hours(event_id: str, event: pd.Series, flags_root: str) -> pd.DataFrame:
+    start = pd.to_datetime(event.start[:13], format="%Y-%m-%d %H")
+    flags = cm.event_flag_arrays(event_id, flags_root)
+    return pd.DataFrame(
+        {
+            "event_id": event_id,
+            "fire_id": event.fire_id,
+            "date_idx": np.arange(cm.N_HOURS),
+            "datetime": start + pd.to_timedelta(np.arange(cm.N_HOURS), unit="h"),
+            "satellite": event.satellite,
+            "longitude": event.longitude,
+            "latitude": event.latitude,
+            "flag": flags[:, -1],
+            "nrl_state": cm.nrl_states(flags),
+        },
+        columns=HOURLY_COLUMNS,
+    )
+
+
+def build_hourly_flags(cfg: DataConfig) -> pd.DataFrame:
+    """
+    Build the table of PyroCb flags: one row per (event, hour) of every valid event.
+
+    Args:
+        cfg: data configuration
+
+    Returns:
+        DataFrame with columns HOURLY_COLUMNS. flag and nrl_state are -1 when
+        the flag file is missing.
+    """
+    events = read_event_table(cfg.snapshots_path)
+    event_ids = available_events(cfg)
+    frames = Parallel(n_jobs=cfg.n_jobs)(
+        delayed(_event_hours)(e, events.loc[e], str(cfg.flags_path)) for e in event_ids
+    )
+    if not frames:
+        return pd.DataFrame(columns=HOURLY_COLUMNS)
+    return pd.concat(frames, ignore_index=True)
+
+
+def build_sample_index(cfg: DataConfig, mode: Mode) -> pd.DataFrame:
+    """
+    Build the table of samples for a prediction mode without using the cache.
+
+    Args:
+        cfg: data configuration
+        mode: prediction mode, see cube_matching.match_samples
+
+    Returns:
+        sample index as returned by cube_matching.match_samples, with the
+        wildfire_id and country of each event
+    """
+    return _samples(build_hourly_flags(cfg), cfg, mode)
+
+
+def _samples(hourly: pd.DataFrame, cfg: DataConfig, mode: Mode) -> pd.DataFrame:
+    """Select the configured events from the hourly flags and match samples."""
+    wildfires = read_wildfires(cfg.events_path)
+    unknown = set(hourly.fire_id) - set(wildfires.index)
+    if unknown:
+        raise ValueError(f"Fires missing from {cfg.events_path}: {sorted(unknown)}")
+    hourly = hourly.join(wildfires, on="fire_id")
+    if cfg.countries is not None:
+        hourly = hourly[hourly.country.isin(cfg.countries)]
+    if cfg.max_events is not None:
+        keep = sorted(hourly.event_id.unique())[: cfg.max_events]
+        hourly = hourly[hourly.event_id.isin(keep)]
+    return cm.match_samples(hourly.reset_index(drop=True), mode)
+
+
+def _read_hourly_cache(cache: Path) -> pd.DataFrame | None:
+    if not cache.exists():
+        return None
+    hourly = pd.read_csv(cache, dtype={"event_id": str})
+    if list(hourly.columns) != HOURLY_COLUMNS:
+        logging.warning("Rebuilding index cache with an outdated layout: %s", cache)
+        return None
+    hourly["datetime"] = pd.to_datetime(hourly["datetime"])
+    return hourly
+
+
+def get_sample_index(cfg: DataConfig, mode: Mode) -> pd.DataFrame:
+    """
+    Load the samples for a prediction mode, using the hourly flags cached in
+    cfg.index_cache and building the cache if it is missing or outdated.
+
+    The cache holds the flags of all events for all modes, so cfg.countries and
+    cfg.max_events are applied after building or loading it and a cache is never
+    silently truncated.
+
+    Args:
+        cfg: data configuration
+        mode: prediction mode, see cube_matching.match_samples
+
+    Returns:
+        sample index as returned by cube_matching.match_samples, with the
+        wildfire_id and country of each event
+    """
+    if cfg.index_cache is None:
+        return build_sample_index(cfg, mode)
+
+    cache = Path(cfg.index_cache)
+    hourly = _read_hourly_cache(cache)
+    if hourly is None:
+        everything = {"max_events": None, "countries": None}
+        hourly = build_hourly_flags(cfg.model_copy(update=everything))
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        hourly.to_csv(cache, index=False)
+    return _samples(hourly, cfg, mode)
+
+
+def read_cubes(
+    cfg: DataConfig,
+    event_id: str,
+    date_idxs: list[int],
+    satellite: str,
+    inputs: Inputs,
+    era5_idxs: list[int] | None = None,
+    era5_channels: list[int] | None = None,
+) -> np.ndarray:
+    """
+    Read the hours of one event from the geostationary and/or ERA5 stores.
+
+    Only the requested hours and channels are read. NaNs are set to zero.
+
+    Args:
+        cfg: data configuration
+        event_id: wildfire piece id, e.g. "100_1"
+        date_idxs: hour indices into the event cubes
+        satellite: satellite name, selects the geostationary channels
+        inputs: which stores to read; "both" stacks geostationary then ERA5
+        era5_idxs: hour indices into the ERA5 cube, if different from date_idxs
+        era5_channels: ERA5 channels to read, in this order; None reads all
+
+    Returns:
+        float32 array of shape (len(date_idxs), channels, height, width)
+    """
+    idxs = np.asarray(date_idxs, dtype=int)
+    cubes = []
+    if inputs in ("geostationary", "both"):
+        geo = _open_array(cfg.geostationary_path / event_id / "data")
+        cubes.append(geo.oindex[idxs, GEO_CHANNELS[satellite]])
+    if inputs in ("era5", "both"):
+        era5 = _open_array(cfg.era5_path / event_id / "data")
+        if era5_idxs is not None:
+            idxs = np.asarray(era5_idxs, dtype=int)
+        channels = slice(None) if era5_channels is None else list(era5_channels)
+        cubes.append(era5.oindex[idxs, channels])
+    return np.nan_to_num(np.concatenate(cubes, axis=1).astype(np.float32))

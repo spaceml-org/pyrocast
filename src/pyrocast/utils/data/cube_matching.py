@@ -1,90 +1,121 @@
-from datetime import datetime
-import zarr
 import os
+
 import numpy as np
-import pyrocast.utils.data.dataload as dl
+import pandas as pd
+import zarr
+
+from pyrocast.config import Mode
+
+N_HOURS = 24
+LEAD_HOURS = 6
+N_NRL_TESTS = 5
+# NRL states of the Pyrocast paper (Figure 1), keyed by nrl_state: the index of
+# the last NRL test passed, 0 when none is. States 0 and 1 are both "none".
+NRL_STATE_NAMES = {
+    0: "none",
+    1: "none",
+    2: "convection",
+    3: "deep_convection",
+    4: "pyrocb",
+}
 
 
-def forecast_match(event_id, date_str, satellite, flag_root):
+def load_flag(flag_path):
     """
-    For a given event, returns information about matched data.
+    Load a PyroCb flag array, returning None if it does not exist.
 
-    Inputs:
-        event_id (str), sub event id for pyrocb wildfire
-        date_str (str), in the SQL table format
-        satellite (str), satelitte name
-        flag_root (str), where to load flag info from
-
-    Outputs:
-    (5 list of equal size)
-
-        final_datacube_dateindxs (list of int), indices to keep for corresponding geostationnary and ERA5 zarr datacubes
-        flag_list (list of booleans), flag 6 hours ahead
-        flag_now_list (list of booleans), current flag
-        final_datetime_list (list of datetimes)
-        satellite_list (list of str),
+    zarr.load creates an empty group for a missing path with zarr>=3, so the
+    path is checked explicitly rather than relying on zarr.load returning None.
     """
+    if not os.path.isdir(flag_path):
+        return None
+    return zarr.load(flag_path)
 
-    # generate datetime list inside
-    start_datetime = datetime.strptime(date_str[:13], "%Y-%m-%d %H")
-    datetime_list, _ = dl.create_daytime_list([start_datetime], frequency=60)
 
-    # Match flags 6 hours ahead
-    flag_list = []
-    flag_now_list = []
+def event_flag_arrays(event_id: str, flag_root: str) -> np.ndarray:
+    """
+    Read the NRL test results for every hour of an event.
 
-    # setup a array of indices and removes those with no corresponding flag information
-    datacube_dateindxs = np.arange(0, 24).tolist()
+    Flag files are numbered from 01, so file HH holds the flags of cube hour HH - 1.
 
-    # make list of indices to remove (we know that some indices will definitely be out of range)
-    pop_list = np.arange(18, 24).tolist()
+    Args:
+        event_id: wildfire piece id, e.g. "100_1"
+        flag_root: directory holding one folder of flag files per event
 
-    # iterate over hours in datacube
-    hour_num = 6
+    Returns:
+        int array of shape (N_HOURS, N_NRL_TESTS): 1 where an NRL test passed,
+        0 where it failed, -1 for hours whose flag file is missing. The last
+        test is the PyroCb flag.
+    """
+    flags = np.full((N_HOURS, N_NRL_TESTS), -1, dtype=int)
+    for hour in range(N_HOURS):
+        path = os.path.join(flag_root, event_id, f"{hour + 1:02d}_PyroCb_flags.zarr")
+        flag = load_flag(path)
+        if flag is not None:
+            flags[hour] = np.asarray(flag, dtype=int)[:N_NRL_TESTS]
+    return flags
 
-    for t in range(18):
-        hour_num = hour_num + 1
-        hour_str = str(hour_num).zfill(2)
-        hour_now_str = str(hour_num - 6).zfill(2)
 
-        flag_path = os.path.join(flag_root, event_id, hour_str + "_PyroCb_flags.zarr")
-        flag_path_now = os.path.join(
-            flag_root, event_id, hour_now_str + "_PyroCb_flags.zarr"
-        )
+def event_flags(event_id: str, flag_root: str) -> np.ndarray:
+    """
+    Read the PyroCb flag for every hour of an event.
 
-        flag_za = zarr.load(flag_path)
-        flag_za_now = zarr.load(flag_path_now)
-        if flag_za_now is None:
-            flag_za_now = -1
-        else:
-            flag_za_now = flag_za_now[4]
+    Args:
+        event_id: wildfire piece id, e.g. "100_1"
+        flag_root: directory holding one folder of flag files per event
 
-        if flag_za is None:
-            pop_list.append(t)
-        if flag_za is not None:
-            # print(flag_za)
-            flag_list.append(flag_za[4])
-            flag_now_list.append(flag_za_now)
-            # print(flag_path)
+    Returns:
+        int array of shape (N_HOURS,): 1 or 0, or -1 where the flag is missing
+    """
+    return event_flag_arrays(event_id, flag_root)[:, -1]
 
-    final_datacube_dateindxs = np.delete(datacube_dateindxs, pop_list)
-    final_datetime_list = np.delete(datetime_list, pop_list)
-    satellite_list = [satellite for _ in range(len(flag_list))]
 
-    return (
-        final_datacube_dateindxs,
-        flag_list,
-        flag_now_list,
-        final_datetime_list,
-        satellite_list,
+def nrl_states(flag_arrays: np.ndarray) -> np.ndarray:
+    """
+    Reduce NRL test results to one state per hour, as get_full_flag in the NRL
+    algorithm: the index of the last test passed, or 0 when none is.
+
+    Args:
+        flag_arrays: array of shape (n, N_NRL_TESTS) from event_flag_arrays
+
+    Returns:
+        int array of shape (n,) in 0..N_NRL_TESTS - 1, -1 where flags are missing
+    """
+    passed = flag_arrays == 1
+    last = N_NRL_TESTS - 1 - np.argmax(passed[:, ::-1], axis=1)
+    states = np.where(passed.any(axis=1), last, 0)
+    return np.where(flag_arrays[:, 0] < 0, -1, states)
+
+
+def match_samples(
+    hourly: pd.DataFrame, mode: Mode, lead_hours: int = LEAD_HOURS
+) -> pd.DataFrame:
+    """
+    Pair input hours with target flags for a prediction mode.
+
+    - detection: inputs at t, label is the flag at t
+    - forecast: inputs at t, label is the flag at t + lead_hours
+    - forecast_oracle: geostationary at t and ERA5 at t + lead_hours (a perfect
+      weather forecast), label is the flag at t + lead_hours
+
+    Args:
+        hourly: one row per (event_id, date_idx) with a flag column, -1 if missing,
+            and optionally an nrl_state column
+        mode: prediction mode
+        lead_hours: forecast lead time in hours
+
+    Returns:
+        the input rows with a missing target dropped, the flag and nrl_state
+        columns renamed to flag_now and state_now (at the input hour, -1 if
+        missing), and added columns era5_idx (ERA5 hour to read) and label
+        (target flag)
+    """
+    shift = 0 if mode == "detection" else lead_hours
+    flags = hourly.set_index(["event_id", "date_idx"]).flag
+    target = pd.MultiIndex.from_arrays([hourly.event_id, hourly.date_idx + shift])
+    renamed = {"flag": "flag_now", "nrl_state": "state_now"}
+    samples = hourly.rename(columns=renamed).assign(
+        era5_idx=hourly.date_idx + (shift if mode == "forecast_oracle" else 0),
+        label=flags.reindex(target, fill_value=-1).to_numpy(),
     )
-
-
-def oracle_match(event_id, date_str, satellite, flag_root):
-
-    return 0
-
-
-def detection_match(event_id, date_str, satellite, flag_root):
-
-    return 0
+    return samples[samples.label >= 0].reset_index(drop=True)
