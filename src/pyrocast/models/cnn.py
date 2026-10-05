@@ -8,7 +8,6 @@ AE-CNN first trains the encoder with a mirror decoder that reconstructs the
 inputs from the 16-dimensional layer, then trains the classifier.
 """
 
-import argparse
 import logging
 
 import numpy as np
@@ -17,11 +16,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch import nn
 
-from pyrocast.config import CNNExperimentConfig, load_config
+from pyrocast.config import CNNExperimentConfig
 from pyrocast.utils import metrics
 from pyrocast.utils.data import dataprep as dp
 from pyrocast.utils.data.dataload import get_sample_index
-from pyrocast.utils.experiment import cross_validate, save_run
+from pyrocast.utils.experiment import cross_validate, experiment_main, save_run
 
 N_GEO_CHANNELS = 6
 IMAGE_SIZE = 200
@@ -320,16 +319,12 @@ def run(cfg: CNNExperimentConfig) -> dict:
 
 def main(argv: list[str] | None = None) -> None:
     """
-    Train the CNN from a YAML config.
+    Run every run of a YAML config (see utils.experiment.expand_grid), or one.
 
     Args:
         argv: command-line arguments, defaults to sys.argv
     """
-    parser = argparse.ArgumentParser(description="Train the Pyrocast CNN")
-    parser.add_argument("--config", required=True, help="path to YAML config")
-    args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO)
-    run(load_config(args.config, CNNExperimentConfig))
+    experiment_main(argv, CNNExperimentConfig, run, "Train the Pyrocast CNN")
 
 
 if __name__ == "__main__":

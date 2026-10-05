@@ -1,11 +1,10 @@
-import argparse
 import logging
 
 import joblib
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 
-from pyrocast.config import RFExperimentConfig, load_config
+from pyrocast.config import RFExperimentConfig
 from pyrocast.utils import metrics
 from pyrocast.utils.data.dataload import get_sample_index
 from pyrocast.utils.data.features import (
@@ -13,7 +12,7 @@ from pyrocast.utils.data.features import (
     input_variables,
     sample_features,
 )
-from pyrocast.utils.experiment import cross_validate, save_run
+from pyrocast.utils.experiment import cross_validate, experiment_main, save_run
 
 
 class RandomForest(RandomForestClassifier):
@@ -92,16 +91,12 @@ def run(cfg: RFExperimentConfig) -> dict:
 
 def main(argv: list[str] | None = None) -> None:
     """
-    Train a random forest from a YAML config.
+    Run every run of a YAML config (see utils.experiment.expand_grid), or one.
 
     Args:
         argv: command-line arguments, defaults to sys.argv
     """
-    parser = argparse.ArgumentParser(description="Train the Pyrocast random forest")
-    parser.add_argument("--config", required=True, help="path to YAML config")
-    args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO)
-    run(load_config(args.config, RFExperimentConfig))
+    experiment_main(argv, RFExperimentConfig, run, "Train the Pyrocast random forest")
 
 
 if __name__ == "__main__":
