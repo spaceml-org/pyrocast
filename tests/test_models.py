@@ -12,15 +12,15 @@ class TestCNN:
         model = CNN(n_channels=6)
         x = torch.randn(2, 6, 200, 200)
         y = model(x)
-        assert y.shape == (2, 1)
+        assert y.shape == (2, 2)
 
-    def test_output_range(self):
+    def test_hidden_layer(self):
         from pyrocast.models.cnn import CNN
 
         model = CNN(n_channels=6)
-        x = torch.randn(1, 6, 200, 200)
-        y = model(x)
-        assert 0.0 <= y.item() <= 1.0
+        hidden, indices, sizes = model.encoder(torch.randn(1, 6, 200, 200))
+        assert hidden.shape == (1, 16)
+        assert len(indices) == len(sizes) == 5
 
 
 class TestRandomForest:
