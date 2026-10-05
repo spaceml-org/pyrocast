@@ -1,63 +1,93 @@
-from sklearn.cluster import KMeans
+"""
+Train/test splits grouped by wildfire.
+
+The Pyrocast papers evaluate with 5-fold cross-validation where every
+observation of a wildfire is in the same fold: "event" CV assigns wildfires to
+folds at random and "spatial" CV clusters them by k-means on their latitude and
+longitude, to estimate performance in an unseen region.
+"""
+
 import numpy as np
 import pandas as pd
+from sklearn.cluster import KMeans
+from sklearn.model_selection import GroupShuffleSplit
+
+from pyrocast.config import SplitConfig
+
+GROUP_COLUMN = "wildfire_id"
 
 
-def make_clusters(seg_base, num_clusters: int, type: str, seed: int = 42):
+def wildfire_folds(index: pd.DataFrame, split: SplitConfig) -> pd.Series:
     """
-    Make equal-sized clusters using k-means clustering.
+    Assign each wildfire to a cross-validation fold.
 
     Args:
-        seg_base (_type_): data to use for clustering
-        num_clusters (int): number of clusters desired
-        seed (int): random seed to  initialise model
-        type (str): 'random' or 'regional'
+        index: sample index with wildfire_id, longitude and latitude columns
+        split: split configuration with scheme "event_cv" or "spatial_cv"
 
     Returns:
-        seg_base
+        fold number (0 to n_folds - 1) indexed by sorted wildfire_id
     """
-    if type == "random":
-        rnds = np.floor(np.arange(0, seg_base.shape[0]) / 17).astype(int)
-        seg_base["cluster_random"] = np.array(rnds).astype(int)
-        return seg_base
-
-    if type == "regional":
-        np.random.seed(seed=seed)
-        seg_base2 = seg_base[["sat", "lon", "lat"]].to_numpy()
-        seg_base2 = np.array(
-            [zscore(seg_base2[:, i]) for i in range(seg_base2.shape[1])]
-        ).T
-        N = seg_base2.shape[0]
-        cluster_size = N // num_clusters
-        print("cluster size: ", cluster_size)
-        labs = -1 * np.ones(N)
-        kmeans = KMeans(n_clusters=num_clusters, random_state=0).fit(seg_base2)
-        grps = kmeans.labels_
-        ids, cnt = np.unique(grps, return_counts=True)
-        print(pd.DataFrame({"cluster": ids, "count": cnt}))
-        o = np.argsort(cnt)
-        DistMat = kmeans.fit_transform(seg_base2)
-
-        # initialize
-        indx_obs = np.arange(seg_base2.shape[0]).tolist()
-        indx_cluster = ids[o][::-1].tolist()
-
-        # loop through clusters from smallest to largest
-        for i in range(len(indx_obs)):
-            # print("i: ", i)
-            o2 = np.argsort(DistMat[indx_obs, indx_cluster[0]])
-            indx_lab = np.array(indx_obs)[o2[0]]
-            labs[indx_lab] = indx_cluster[0]
-            indx_cluster.pop(0)
-            if len(indx_cluster) == 0:
-                indx_cluster = ids[o][::-1].tolist()
-            indx_obs = list(set(indx_obs).difference([indx_lab]))
-
-        # seg_base["cluster"]=np.array(labs).astype(int)
-        seg_base["cluster_regional"] = np.array(grps).astype(int)
-
-        return seg_base
+    fires = index.groupby(GROUP_COLUMN)[["longitude", "latitude"]].mean()
+    if len(fires) < split.n_folds:
+        raise ValueError(
+            f"{len(fires)} wildfires cannot be split into {split.n_folds} folds"
+        )
+    if split.scheme == "event_cv":
+        order = np.random.default_rng(split.seed).permutation(len(fires))
+        folds = np.empty(len(fires), dtype=int)
+        folds[order] = np.arange(len(fires)) % split.n_folds
+    elif split.scheme == "spatial_cv":
+        coords = fires[["latitude", "longitude"]].to_numpy()
+        coords = (coords - coords.mean(0)) / coords.std(0)
+        kmeans = KMeans(n_clusters=split.n_folds, n_init=10, random_state=split.seed)
+        folds = kmeans.fit_predict(coords)
+    else:
+        raise ValueError(f"Not a cross-validation scheme: {split.scheme}")
+    return pd.Series(folds, index=fires.index, name="fold")
 
 
-def zscore(x):
-    return (x - np.mean(x)) / np.std(x)
+def fold_splits(
+    index: pd.DataFrame, split: SplitConfig
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """
+    Train and test row positions of each fold, keeping each wildfire in one set.
+
+    Args:
+        index: sample index with wildfire_id, longitude and latitude columns
+        split: split configuration
+
+    Returns:
+        one (train, test) pair of row position arrays per fold; a single pair
+        for the "holdout" scheme
+    """
+    if split.scheme == "holdout":
+        splitter = GroupShuffleSplit(
+            n_splits=1, test_size=split.test_fraction, random_state=split.seed
+        )
+        return [next(splitter.split(index, groups=index[GROUP_COLUMN]))]
+    folds = index[GROUP_COLUMN].map(wildfire_folds(index, split)).to_numpy()
+    rows = np.arange(len(index))
+    return [(rows[folds != k], rows[folds == k]) for k in range(split.n_folds)]
+
+
+def split_by_fire(
+    index: pd.DataFrame, split: SplitConfig
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Split the sample index once into train and test sets, keeping each wildfire
+    in one set.
+
+    Args:
+        index: sample index with a wildfire_id column
+        split: split configuration; test_fraction and seed are used
+
+    Returns:
+        train and test sample indices
+    """
+    holdout = split.model_copy(update={"scheme": "holdout"})
+    train, test = fold_splits(index, holdout)[0]
+    return (
+        index.iloc[train].reset_index(drop=True),
+        index.iloc[test].reset_index(drop=True),
+    )
