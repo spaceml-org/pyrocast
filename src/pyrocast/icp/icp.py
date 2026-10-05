@@ -1,503 +1,704 @@
+"""
+Invariant causal prediction (ICP) of pyroCb drivers.
+
+Implements "Identifying the Causes of Pyrocumulonimbus (PyroCb)" (Díaz
+Salas-Porras et al., NeurIPS 2022 Causal ML workshop, arXiv:2211.08883):
+
+- the conditional independence test Y _||_ E | X_S compares the out-of-fold AUC
+  of random forests on X_S and on (X_S, E) with DeLong's test, where E is the
+  wildfire longitude, latitude and date and folds group observations by wildfire;
+- greedy ICP removes, one at a time, the variable whose removal gives the
+  largest p-value;
+- exhaustive ICP tests every large subset of the variables left by greedy ICP;
+- ICP on clusters groups dependent variables by normalised HSIC (Appendix A.2);
+- the greedy ordering is validated with event and spatial cross-validation
+  (Figure 3).
+
+Each of the 28 candidate variables is summarised by 11 spatial statistics, except
+the categorical vegetation types, summarised by the fraction of pixels of their
+most common type codes.
+"""
+
+import itertools
+import json
+import logging
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from sklearn.metrics import roc_curve, roc_auc_score, confusion_matrix
+from joblib import Parallel, delayed
+from scipy.stats import norm, rankdata
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.inspection import permutation_importance
-from itertools import permutations, combinations
-from pyrocast.utils.data import dataprep as dp
-from scipy.stats import norm
+
+from pyrocast.config import (
+    ERA5_VARIABLES,
+    ICPConfig,
+    ICPExperimentConfig,
+    SplitConfig,
+)
+from pyrocast.utils.data.cross_validation import wildfire_folds
+from pyrocast.utils.data.dataload import get_sample_index
+from pyrocast.utils.data.features import (
+    ALTITUDE,
+    GEO_VARIABLES,
+    VEGETATION_TYPES,
+    WIND_SPEEDS,
+    altitude_features,
+    get_feature_table,
+    sample_features,
+)
+from pyrocast.utils.experiment import experiment_main, save_run
+from pyrocast.utils.metrics import auc_or_nan
+
+# Candidate causes of the ICP paper (Table 1 plus wind speeds and altitude). The
+# vegetation types enter as typeH and typeL, not as summary statistics.
+ICP_VARIABLES = (
+    list(GEO_VARIABLES)
+    + [v for v in ERA5_VARIABLES if v not in VEGETATION_TYPES.values()]
+    + list(WIND_SPEEDS)
+    + [ALTITUDE]
+    + list(VEGETATION_TYPES)
+)
+# Type codes kept per vegetation variable, the most common ones in the data (the
+# paper's 296 features hold 4 for high and 6 for low vegetation).
+N_TYPE_CODES_KEPT = {"typeH": 4, "typeL": 6}
 
 
-def getTestProbs(
-    cube: np.ndarray,
-    labels: np.ndarray,
-    event_df: pd.DataFrame,
-    cluster_var: str,
-    cluster: str,
-    numTrees: int = 100,
-    envVar: np.ndarray = None,
-) -> np.ndarray:
+# ---------------------------------------------------------------------------
+# Data
+# ---------------------------------------------------------------------------
+
+
+def decimal_year(times: pd.Series) -> np.ndarray:
+    """Date as a fractional year, e.g. 2019-12-01 -> 2019.917."""
+    times = pd.to_datetime(times)
+    days = np.where(times.dt.is_leap_year, 366.0, 365.0)
+    return (times.dt.year + (times.dt.dayofyear - 1) / days).to_numpy()
+
+
+def environment(index: pd.DataFrame, names: list[str]) -> np.ndarray:
     """
-    Function to calculate the "out-of sample" probability of PyroCb ocurrence for a given cluster by training an RF model on observations from all other clusters and using model to predict for cluster observations
+    Environment variables E of each sample.
+
     Args:
-        cube: n x p .matrix with meteorological and geo-stationary featues for each site and time. These features are different statistics of each of 30 met. and geo-st. vars
-        labels:  vector indicating whether a pyroCb occurred or not 6 hours after corresponding cube observation
-        event_df: ancillary information for each observation including date, location, random and spatial clusters for CV, etc
-        cluster_var: one of 'cluster_random' or 'cluster_regional' indicates whether CV is random or spatial
-        cluster: name of the cluster for which predictions will be calculated
-        numTrees: the number of trees to use for each RF model
-        envVar: matrix with the features that define the E variable in ICP. If given will also be included in RF model.
+        index: sample index with longitude, latitude and datetime
+        names: from "longitude", "latitude" and "date" (fractional year)
 
     Returns:
-       a vector of pyroCb "out-of-sample" probability of occurrence for observations IN CLUSTER
+        array of shape (len(index), len(names))
     """
-    # print("cluster: ", cluster)
-    (indx_val,) = np.where(event_df[cluster_var] == cluster)
-    indx_train = np.array(list(set(np.arange(0, cube.shape[0])).difference(indx_val)))
-
-    X_train = cube[indx_train, :]
-    X_val = cube[indx_val, :]
-    y_train = labels[indx_train]
-    y_val = labels[indx_val]
-
-    if envVar is not None:
-        envVar_train = envVar[indx_train,]
-        envVar_val = envVar[indx_val,]
-        X_train = np.concatenate([X_train, envVar_train], axis=1)
-        X_val = np.concatenate([X_val, envVar_val], axis=1)
-
-    event_df_train = event_df.iloc[indx_train]
-    event_df_val = event_df.iloc[indx_val]
-
-    clf = RandomForestClassifier(
-        n_estimators=numTrees,
-        max_depth=10,
-        class_weight="balanced_subsample",
-        random_state=0,
-    )
-    clf.fit(X_train, y_train)
-    y_pred = clf.predict_proba(X_val)
-    return y_pred[:, 1]
-
-
-def getTestProbsWrapper(
-    cube: np.ndarray,
-    labels: np.ndarray,
-    event_df: pd.DataFrame,
-    cluster_var: str,
-    indxIncl: list,
-    posts: np.ndarray,
-    numTrees: int = 100,
-    envVar: np.ndarray = None,
-) -> np.ndarray:
-    """
-        A wrapper function that calculates pyroCb "out-of-sample" probability of ocurrence by calling
-        getTestProbs for each cluster.
-    Args:
-        cube: n x p .matrix with meteorological and geo-stationary featues for each site and time. These features are different statistics of each of 30 met. and geo-st. vars
-        labels:  vector indicating whether a pyroCb occurred or not 6 hours after corresponding cube observation
-        event_df: ancillary information for each observation including date, location, random and spatial clusters for CV, etc
-        cluster_var: one of 'cluster_random' or 'cluster_regional' indicates whether CV is random or spatial
-        indxIncl: indices of features to be used. Could refer to raw variables or statistics
-        posts: if indxIncl is given with respect to raw met. and geo. vars then posts include the indices where the statistics of each var begin and end
-        numTrees: the number of trees to use for each RF model
-        envVar: matrix with the features that define the E variable in ICP. If given will also be included in RF model.
-
-    Returns:
-        a vector of pyroCb "out-of-sample" probability of occurrence for ALL observations
-    """
-    if posts is not None:
-        indxIncl = np.array(
-            dp.flatten([np.arange(posts[i], posts[i + 1]).tolist() for i in indxIncl])
-        )
-
-    clusts = np.sort(np.unique(event_df[cluster_var]))
-
-    if len(indxIncl) > 0:
-        pred = cube[:, indxIncl]
-    else:
-        np.random.seed(1234556)
-        smpl = np.random.choice(cube.shape[0], size=cube.shape[0], replace=False)
-        pred = cube[smpl, :]
-
-    y_preds = [
-        getTestProbs(
-            pred, labels, event_df, cluster_var, i, numTrees=numTrees, envVar=envVar
-        )
-        for i in clusts
-    ]
-    y_pred = np.ones(cube.shape[0]) * -1
-    for i in clusts:
-        (indx_val,) = np.where(event_df[cluster_var] == i)
-        y_pred[indx_val] = y_preds[i]
-    return y_pred
-
-
-def equalAUC_hypTest(
-    y_pred_noE: np.ndarray, y_pred_E: np.ndarray, labels: np.ndarray
-) -> dict:
-    """
-    Performs conditional Independence test y indep E | X by comparing "reduced" model that excludes enviroment features E with "full" model that includes them
-    Use deLong test for difference in AUC between classification models.
-    Y is pyroCb ocurrence, X are the geostationary and
-    meteorological variables and E are the environment variables (latitude, longitude and julian date)
-    Args:
-        y_pred_noE: probability of pyroCb ocurrence for each observation from "reduced" model excluding environment E features
-        y_pred_E: probability of pyroCb ocurrence for each observation from "full" model including environment E features
-        labels:  pyroCb ocurrence indicator for each observation
-
-    Returns:
-        dictionary with statistic for test, one-tail and two-tail p-value for test, aswell as the "full" and "reduced" AUCs
-    """
-    # without E
-    y_pred1 = y_pred_noE[labels == 1]
-    y_pred0 = y_pred_noE[labels == 0]
-    Phi = y_pred1[:, None] > y_pred0[None, :]
-    VT_noE_1 = (1 / (y_pred0.shape[0] - 1)) * np.apply_along_axis(np.sum, 1, Phi)
-    VT_noE_0 = (1 / (y_pred1.shape[0] - 1)) * np.apply_along_axis(np.sum, 0, Phi)
-    A_noE = (
-        np.sum(VT_noE_1) / VT_noE_1.shape[0] + np.sum(VT_noE_0) / VT_noE_0.shape[0]
-    ) / 2
-    # print("auc without E:",A_noE)
-    ST_noE_1 = (VT_noE_1 - A_noE) ** 2
-    ST_noE_1 = np.sum(ST_noE_1) / (ST_noE_1.shape[0] - 1)
-    ST_noE_0 = (VT_noE_0 - A_noE) ** 2
-    ST_noE_0 = np.sum(ST_noE_0) / (ST_noE_0.shape[0] - 1)
-    VA_noE = (ST_noE_1 / VT_noE_1.shape[0]) + (ST_noE_0 / VT_noE_0.shape[0])
-    # with E
-    y_pred1 = y_pred_E[labels == 1]
-    y_pred0 = y_pred_E[labels == 0]
-    Phi = y_pred1[:, None] > y_pred0[None, :]
-    VT_E_1 = (1 / (y_pred0.shape[0] - 1)) * np.apply_along_axis(np.sum, 1, Phi)
-    VT_E_0 = (1 / (y_pred1.shape[0] - 1)) * np.apply_along_axis(np.sum, 0, Phi)
-    A_E = (np.sum(VT_E_1) / VT_E_1.shape[0] + np.sum(VT_E_0) / VT_E_0.shape[0]) / 2
-    # print("auc with E: ",A_E)
-    ST_E_1 = (VT_E_1 - A_E) ** 2
-    ST_E_1 = np.sum(ST_E_1) / (ST_E_1.shape[0] - 1)
-    ST_E_0 = (VT_E_0 - A_E) ** 2
-    ST_E_0 = np.sum(ST_E_0) / (ST_E_0.shape[0] - 1)
-    VA_E = (ST_E_1 / VT_E_1.shape[0]) + (ST_E_0 / VT_E_0.shape[0])
-    # Covariance
-    ST_EnoE_1 = (VT_noE_1 - A_noE) * (VT_E_1 - A_E)
-    ST_EnoE_1 = np.sum(ST_EnoE_1) / (ST_EnoE_1.shape[0] - 1)
-    ST_EnoE_0 = (VT_noE_0 - A_noE) * (VT_E_0 - A_E)
-    ST_EnoE_0 = np.sum(ST_EnoE_0) / (ST_EnoE_0.shape[0] - 1)
-    COV_EnoE = (ST_EnoE_1 / VT_E_1.shape[0]) + (ST_EnoE_0 / VT_E_0.shape[0])
-    # Statistic
-    V_noE_E = VA_noE + VA_E - 2 * COV_EnoE
-    z = (A_E - A_noE) / np.sqrt(V_noE_E)
-    # H0: with E is not better -> A_E-A_noE is not large
-    pval1tail = 1 - norm.cdf(z)
-    # H0: neither model is better
-    pval2tail = (1 - norm.cdf(np.abs(z))) + norm.cdf(-np.abs(z))
-    res = {
-        "stat": z,
-        "pval_1tail": pval1tail,
-        "pval_2tail": pval2tail,
-        "auc_E": A_E,
-        "auc_noE": A_noE,
+    columns = {
+        "longitude": index.longitude.to_numpy(float),
+        "latitude": index.latitude.to_numpy(float),
+        "date": decimal_year(index.datetime),
     }
-    return res
+    return np.stack([columns[n] for n in names], axis=1)
 
 
-def getHypWrapper(
-    cube: np.ndarray,
-    labels: np.ndarray,
-    envVar: np.ndarray,
-    event_df: pd.DataFrame,
-    cluster_var: str,
-    indxIncl: list,
-    posts: np.ndarray,
-    numTrees: int = 100,
-) -> dict:
+def icp_blocks(
+    index: pd.DataFrame, table: pd.DataFrame, elevation_path: Path
+) -> dict[str, np.ndarray]:
     """
-    Wrapper that calculates probability of pyroCb occurrence for "full" (including E features) and "reduced" (excluding E features)
-    and uses these to test conditional independence of Y and E given X.
-    Y is pyroCb ocurrence, X are the geostationary and
-    meteorological variables and E are the environment variables (latitude, longitude and julian date)
-    Args:
-        cube: n x p .matrix with meteorological and geo-stationary featues for each site and time. These features are different statistics of each of 30 met. and geo-st. vars
-        labels:  vector indicating whether a pyroCb occurred or not 6 hours after corresponding cube observation
-        envVar: matrix with the features that define the E variable in ICP. If given will also be included in RF model.
-        event_df: ancillary information for each observation including date, location, random and spatial clusters for CV, etc
-        cluster_var: one of 'cluster_random' or 'cluster_regional' indicates whether CV is random or spatial
-        indxIncl: indices of features to be used. Could refer to raw variables or statistics
-        posts: if indxIncl is given with respect to raw met. and geo. vars then posts include the indices where the statistics of each var begin and end
-        numTrees: the number of trees to use for each RF model
-
-
-    Returns:
-        dictionary with statistic for test, one-tail and two-tail p-value for test, aswell as the "full" and "reduced" AUCs
-    """
-    y_pred_noE = getTestProbsWrapper(
-        cube, labels, event_df, cluster_var, indxIncl, posts, numTrees=numTrees
-    )
-    y_pred_E = getTestProbsWrapper(
-        cube,
-        labels,
-        event_df,
-        cluster_var,
-        indxIncl,
-        posts,
-        numTrees=numTrees,
-        envVar=envVar,
-    )
-    res = equalAUC_hypTest(y_pred_noE, y_pred_E, labels)
-    return res
-
-
-def exclude_i(
-    cube: np.ndarray,
-    labels: np.ndarray,
-    envVar: np.ndarray,
-    event_df: pd.DataFrame,
-    cluster_var: str,
-    indxIncl: list,
-    posts: np.ndarray,
-    i: int,
-    numTrees: int = 100,
-) -> dict:
-    """
-    Performs hypothesis test for conditional independence Y indep E | X\i , i.e. excluding variable
-    with index i from the current list of included variables indxIncl
+    Feature block of every candidate variable.
 
     Args:
-        cube: n x p matrix with meteorological and geo-stationary featues for each site and time. These features are different statistics of each of 30 met. and geo-st. vars
-        labels:  vector indicating whether a pyroCb occurred or not 6 hours after corresponding cube observation
-        envVar: matrix with the features that define the E variable in ICP. If given will also be included in RF model.
-        event_df: ancillary information for each observation including date, location, random and spatial clusters for CV, etc
-        cluster_var: one of 'cluster_random' or 'cluster_regional' indicates whether CV is random or spatial
-        indxIncl: indices of features not excluded up to now. Could refer to raw variables or statistics
-        posts: if indxIncl is given with respect to raw met. and geo. vars then posts include the indices where the statistics of each var begin and end
-        i: index of variable to be excluded from X
-        numTrees: the number of trees to use for each RF model
+        index: sample index
+        table: feature table from get_feature_table
+        elevation_path: elevation grid for the altitude variable
 
     Returns:
-       dictionary with statistic for test, one-tail and two-tail p-value for test, aswell as the "full" and "reduced" AUCs
+        dict from each name in ICP_VARIABLES to an array of shape
+        (len(index), n_features)
     """
-    print("i: ", i, " out of : ", len(indxIncl))
-    indxExcl = indxIncl[i]
-    indxIncl = list(set(indxIncl).difference(set([indxExcl])))
-    res = getHypWrapper(
-        cube, labels, envVar, event_df, cluster_var, indxIncl, posts, numTrees=numTrees
-    )
-    print(res)
-    return res
+    blocks = {}
+    for variable in ICP_VARIABLES:
+        if variable == ALTITUDE:
+            blocks[variable] = altitude_features(index, elevation_path)
+            continue
+        x, _ = sample_features(index, table, [variable])
+        if variable in VEGETATION_TYPES:
+            common = np.argsort(-x.mean(axis=0))[: N_TYPE_CODES_KEPT[variable]]
+            x = x[:, np.sort(common)]
+        blocks[variable] = x
+    return blocks
 
 
-def greedyICP(
-    cube: np.ndarray,
-    labels: np.ndarray,
-    envVar: np.ndarray,
-    event_df: pd.DataFrame,
-    cluster_var: str,
-    indxIncl: list,
-    posts: np.ndarray,
-    varss: list,
-    numTrees: int = 100,
-    pvalTest: str = "pval_1tail",
-) -> dict:
+# ---------------------------------------------------------------------------
+# Conditional independence test
+# ---------------------------------------------------------------------------
+
+
+def _delong_components(y: np.ndarray, p: np.ndarray):
+    pos, neg = p[y == 1], p[y == 0]
+    m, n = len(pos), len(neg)
+    tz = rankdata(np.concatenate([pos, neg]))
+    tx, ty = rankdata(pos), rankdata(neg)
+    auc = (tz[:m].sum() - m * (m + 1) / 2) / (m * n)
+    v01 = (tz[:m] - tx) / n
+    v10 = 1.0 - (tz[m:] - ty) / m
+    return auc, v01, v10
+
+
+def delong_test(y: np.ndarray, p_without: np.ndarray, p_with: np.ndarray) -> dict:
     """
-    This function implements greedy ICP algorithm by sequentially removing that variable i from the list
-    of predictors have not been excluded yet, such that by excluding it we obtain the largest p-value
-    for the conditional independence test Y indep E | X\i
+    DeLong et al. (1988) test for the difference of two correlated AUCs.
 
     Args:
-        cube: n x p matrix with meteorological and geo-stationary featues for each site and time. These features are different statistics of each of 30 met. and geo-st. vars
-        labels:  vector indicating whether a pyroCb occurred or not 6 hours after corresponding cube observation
-        envVar: matrix with the features that define the E variable in ICP. If given will also be included in RF model.
-        event_df: ancillary information for each observation including date, location, random and spatial clusters for CV, etc
-        cluster_var: one of 'cluster_random' or 'cluster_regional' indicates whether CV is random or spatial
-        indxIncl: indices of features to be used. Could refer to raw variables or statistics
-        posts: if indxIncl is given with respect to raw met. and geo. vars then posts include the indices where the statistics of each var begin and end
-        varss: list of strings denoting the geostationary and meteorological variables in the cube
-        numTrees: the number of trees to use for each RF model
-        pvalTest: string indicating if the pvalue should be 1-tailed ('pval_1tail') or 2-tailed ("pval_2tail')
+        y: binary labels
+        p_without: scores of the model without the environment
+        p_with: scores of the model with the environment
 
     Returns:
-        A dictionary with the sequences of excluded variable (as indices of the varss list),
-        , corresponding p-values an aucs (for full and restricted RF models)
+        dict with the z statistic, the one-tailed p-value of H0 "E does not
+        improve the AUC" (pval_1tail), the two-tailed p-value (pval_2tail) and
+        both AUCs (auc_noE, auc_E)
     """
-    indxExcl = []
-    indxPvals = []
-    aucs_E = []
-    aucs_noE = []
-    indxIncl2 = indxIncl.copy()
+    y = np.asarray(y)
+    a0, v01_0, v10_0 = _delong_components(y, np.asarray(p_without, float))
+    a1, v01_1, v10_1 = _delong_components(y, np.asarray(p_with, float))
+    s01 = np.cov(np.stack([v01_0, v01_1]))
+    s10 = np.cov(np.stack([v10_0, v10_1]))
+    s = s01 / len(v01_0) + s10 / len(v10_0)
+    var = s[0, 0] + s[1, 1] - 2 * s[0, 1]
+    z = (a1 - a0) / np.sqrt(var) if var > 0 else 0.0
+    return {
+        "stat": float(z),
+        "pval_1tail": float(norm.sf(z)),
+        "pval_2tail": float(2 * norm.sf(abs(z))),
+        "auc_E": float(a1),
+        "auc_noE": float(a0),
+    }
 
-    res = getHypWrapper(
-        cube, labels, envVar, event_df, cluster_var, indxIncl, posts, numTrees=numTrees
-    )
-    print(res)
 
-    while len(indxIncl2) > 1:
+def oof_predictions(
+    x: np.ndarray,
+    y: np.ndarray,
+    folds: np.ndarray,
+    n_estimators: int,
+    cfg: ICPConfig,
+) -> np.ndarray:
+    """
+    Out-of-fold random forest probabilities.
 
-        print("num left: ", len(indxIncl2))
-        hyps = [
-            exclude_i(
-                cube,
-                labels,
-                envVar,
-                event_df,
-                cluster_var,
-                indxIncl2,
-                posts,
-                i,
-                numTrees=numTrees,
+    Args:
+        x: features
+        y: binary labels
+        folds: fold of each sample
+        n_estimators: number of trees
+        cfg: forest settings (depth, class weight, seed)
+
+    Returns:
+        predicted probability of each sample from the forest not trained on it
+    """
+    prob = np.empty(len(y))
+    for fold in np.unique(folds):
+        test = folds == fold
+        rf = RandomForestClassifier(
+            n_estimators=n_estimators,
+            max_depth=cfg.max_depth,
+            class_weight=cfg.class_weight,
+            random_state=cfg.random_state,
+            n_jobs=1,
+        )
+        rf.fit(x[~test], y[~test])
+        prob[test] = rf.predict_proba(x[test])[:, 1]
+    return prob
+
+
+class ConditionalIndependenceTest:
+    """
+    Y _||_ E | X_S for subsets S of the candidate variables, with results cached
+    in memory and, optionally, in a JSON-lines file so a run can be resumed.
+
+    Args:
+        blocks: feature block of each variable, see icp_blocks
+        env: environment variables E
+        y: binary labels
+        folds: cross-validation fold of each sample
+        cfg: ICP settings
+        cache: JSON-lines file of previous results, appended to
+    """
+
+    def __init__(self, blocks, env, y, folds, cfg: ICPConfig, cache=None):
+        self.blocks, self.env, self.y, self.folds = blocks, env, y, folds
+        self.cfg = cfg
+        self.order = {v: i for i, v in enumerate(blocks)}
+        self.cache = None if cache is None else Path(cache)
+        self.results = {}
+        if self.cache is not None and self.cache.exists():
+            for line in self.cache.read_text().splitlines():
+                record = json.loads(line)
+                self.results[self.key(record["subset"])] = record
+
+    def key(self, subset) -> tuple[str, ...]:
+        """Canonical (store-ordered) form of a subset."""
+        return tuple(sorted(subset, key=self.order.__getitem__))
+
+    def _compute(self, key) -> dict:
+        x = np.concatenate([self.blocks[v] for v in key], axis=1)
+        n = self.cfg.n_estimators
+        p_without = oof_predictions(x, self.y, self.folds, n, self.cfg)
+        x_env = np.concatenate([x, self.env], axis=1)
+        p_with = oof_predictions(x_env, self.y, self.folds, n, self.cfg)
+        return {"subset": list(key), **delong_test(self.y, p_without, p_with)}
+
+    def __call__(self, subsets: list) -> list[dict]:
+        """
+        Test subsets, in parallel over cfg.n_jobs workers.
+
+        Args:
+            subsets: list of variable collections
+
+        Returns:
+            one result dict (see delong_test, plus "subset") per subset
+        """
+        keys = [self.key(s) for s in subsets]
+        todo = list(dict.fromkeys(k for k in keys if k not in self.results))
+        if todo:
+            logging.info("Running %d conditional independence tests", len(todo))
+            new = Parallel(n_jobs=self.cfg.n_jobs)(
+                delayed(self._compute)(k) for k in todo
             )
-            for i in range(len(indxIncl2))
-        ]
-
-        # index as a function of indices that are left. ie indxIncl2
-        exclude_indx = np.argmax([h["pval_1tail"] for h in hyps])
-
-        # index as a function of original indices
-        exclude_indx2 = indxIncl2[exclude_indx]
-
-        auc_E = hyps[exclude_indx]["auc_E"]
-        auc_noE = hyps[exclude_indx]["auc_noE"]
-        pval = np.max([h[pvalTest] for h in hyps])
-        print(
-            " exclude var: ",
-            varss[exclude_indx2],
-            " pval: ",
-            pval,
-            " auc_noE: ",
-            auc_noE,
-            " auc_E: ",
-            auc_E,
-        )
-        indxExcl.append(exclude_indx2)
-        indxPvals.append(pval)
-        aucs_E.append(auc_E)
-        aucs_noE.append(auc_noE)
-        # print("exclude_indx: ", exclude_indx)
-        # print("indxIncl2 : ", indxIncl2)
-        indxIncl2.pop(exclude_indx)
-
-    indxExcl.append(indxIncl2[0])
-    indxPvals.append(np.nan)
-    indxIncl2.pop(0)
-    aucs_E.append(0)
-    aucs_noE.append(0)
-
-    res = {"indxVar": indxExcl, "pval": indxPvals, "auc_E": aucs_E, "auc_noE": aucs_noE}
-    return res
+            for record in new:
+                self.results[tuple(record["subset"])] = record
+            if self.cache is not None:
+                with open(self.cache, "a") as f:
+                    f.writelines(json.dumps(r) + "\n" for r in new)
+        return [self.results[k] for k in keys]
 
 
-def findIndxAux(varss: list, combos: list, i: int) -> int:
+# ---------------------------------------------------------------------------
+# ICP searches
+# ---------------------------------------------------------------------------
+
+
+def greedy_icp(test: ConditionalIndependenceTest, variables: list[str]) -> list[dict]:
     """
-    For a list of variables combos, and index i referring to said list, translate this index int
-    terms of a different, larger, super-set, list varss
+    Greedy ICP: repeatedly remove the variable whose removal gives the largest
+    one-tailed p-value of Y _||_ E | X_S.
+
     Args:
-        varss: list of strings denoting the geostationary and meteorological variables in the cube
-        combos: list with selected list of variables, usually a product of using greedyICP with a certain cutoff
-        i: index of variable within combos, for which we want index with respect to varss
+        test: conditional independence test
+        variables: initial set S
 
     Returns:
-        integer position index of combos[i] within varss list
+        one step per variable, in exclusion order, with the excluded variable,
+        the p-value and AUCs of the test without it, and the variables left;
+        the last variable has no test (p-value NaN)
     """
-    (indx,) = np.where(np.array(varss) == combos[i])
-    return indx[0]
+    remaining = list(variables)
+    steps = []
+    while len(remaining) > 1:
+        candidates = [[v for v in remaining if v != u] for u in remaining]
+        results = test(candidates)
+        best = int(np.argmax([r["pval_1tail"] for r in results]))
+        excluded = remaining.pop(best)
+        steps.append({"excluded": excluded, "remaining": list(remaining)})
+        steps[-1].update({k: v for k, v in results[best].items() if k != "subset"})
+        logging.info(
+            "Greedy ICP: exclude %s (p=%.4g)", excluded, results[best]["pval_1tail"]
+        )
+    nan = float("nan")
+    steps.append(
+        {
+            "excluded": remaining[0],
+            "remaining": [],
+            **dict.fromkeys(
+                ["stat", "pval_1tail", "pval_2tail", "auc_E", "auc_noE"], nan
+            ),
+        }
+    )
+    return steps
 
 
-def getHypWrapper2(
-    cube: np.ndarray,
-    labels: np.ndarray,
-    envVar: np.ndarray,
-    event_df: pd.DataFrame,
-    cluster_var: str,
-    varss: list,
-    combos: list,
-    j: int,
-    posts: np.ndarray,
-    numTrees: int = 100,
+def greedy_causal_set(steps: list[dict], alpha: float) -> list[str]:
+    """
+    Variables not yet excluded when greedy ICP first rejects at level alpha.
+
+    Args:
+        steps: output of greedy_icp
+        alpha: significance level
+
+    Returns:
+        the causal predictors, in exclusion order
+    """
+    for i, step in enumerate(steps):
+        if step["pval_1tail"] < alpha:
+            return [s["excluded"] for s in steps[i:]]
+    return [steps[-1]["excluded"]]
+
+
+def subsets_of_size(variables: list[str], min_size: int) -> list[list[str]]:
+    """All subsets of variables with at least min_size elements."""
+    return [
+        list(c)
+        for k in range(min_size, len(variables) + 1)
+        for c in itertools.combinations(variables, k)
+    ]
+
+
+def intersection(sets: list[list[str]]) -> list[str]:
+    """Variables in every set (empty when there is no set)."""
+    if not sets:
+        return []
+    common = set(sets[0]).intersection(*sets[1:])
+    return [v for v in sets[0] if v in common]
+
+
+def defining_sets(accepted: list[list[str]], variables: list[str]) -> list[list[str]]:
+    """
+    Defining sets of Heinze-Deml et al. (2018): the minimal sets of variables
+    that intersect every accepted set.
+
+    Args:
+        accepted: accepted subsets
+        variables: candidate variables
+
+    Returns:
+        minimal hitting sets, by size then variable order
+    """
+    if not accepted:
+        return []
+    accepted = [set(a) for a in accepted]
+    found = []
+    for k in range(1, len(variables) + 1):
+        for c in itertools.combinations(variables, k):
+            s = set(c)
+            if any(f <= s for f in found):
+                continue
+            if all(s & a for a in accepted):
+                found.append(s)
+    return [[v for v in variables if v in f] for f in found]
+
+
+def exhaustive_icp(
+    test: ConditionalIndependenceTest, subsets: list[list[str]], alpha: float
 ) -> dict:
     """
-    Applies conditional independence test Y indep E | X where the features of X are taken from the
-    j-th entry of a list of combinations of features of interest.
+    Test every subset and intersect those accepted.
+
     Args:
-        cube: n x p matrix with meteorological and geo-stationary featues for each site and time. These features are different statistics of each of 30 met. and geo-st. vars
-        labels:  vector indicating whether a pyroCb occurred or not 6 hours after corresponding cube observation
-        envVar: matrix with the features that define the E variable in ICP. If given will also be included in RF model.
-        event_df: ancillary information for each observation including date, location, random and spatial clusters for CV, etc
-        cluster_var: one of 'cluster_random' or 'cluster_regional' indicates whether CV is random or spatial
-        varss: list of strings denoting the geostationary and meteorological variables in the cube
-        combos: list of lists. Each inner list corresponds to a set of features to define X, and carry out Y indep E |X conditional independnece test
-        j: the position index within combos for the set of features that defines X
-        posts: if indxIncl is given with respect to raw met. and geo. vars then posts include the indices where the statistics of each var begin and end
-        numTrees: the number of trees to use for each RF model
+        test: conditional independence test
+        subsets: subsets to test
+        alpha: significance level
 
     Returns:
-        dictionary with statistic for test,  0ne-tail and two-tail p-value for test, aswell as the "full" and "reduced" AUCs
-        Within the conditional independence test Y indep E|X, the features that define X are taken from
-        the j-th entry of combos
+        dict with the test results, the accepted subsets (p_1tail > alpha),
+        their intersection and their defining sets
     """
-    print("j: ", j, " out of ", len(combos))
-    print("combo: ", combos[j])
-    indxIncl = [findIndxAux(varss, combos[j], i) for i in range(len(combos[j]))]
-    res = getHypWrapper(
-        cube, labels, envVar, event_df, cluster_var, indxIncl, posts, numTrees=numTrees
-    )
-    print("res: ")
-    print(res)
-    return res
+    results = test(subsets)
+    accepted = [r["subset"] for r in results if r["pval_1tail"] > alpha]
+    variables = test.key({v for s in subsets for v in s})
+    return {
+        "n_tested": len(results),
+        "n_accepted": len(accepted),
+        "accepted": accepted,
+        "intersection": intersection(accepted),
+        "defining_sets": defining_sets(accepted, list(variables)),
+        "tests": results,
+    }
 
 
-def exhaustiveICP(
-    cube: np.ndarray,
-    labels: np.ndarray,
-    envVar: np.ndarray,
-    event_df: pd.DataFrame,
-    cluster_var: str,
-    varss: list,
-    combos: list,
-    posts: np.ndarray,
-    numTrees: int,
-) -> list:
+# ---------------------------------------------------------------------------
+# HSIC clusters (Appendix A.2)
+# ---------------------------------------------------------------------------
+
+
+def _rbf_gram(x: np.ndarray) -> np.ndarray:
+    d2 = ((x[:, None, :] - x[None, :, :]) ** 2).sum(-1)
+    scale = max(np.median(d2), np.mean(d2), 1e-9)
+    return np.exp(-d2 / scale)
+
+
+def normalised_hsic(x: np.ndarray, z: np.ndarray) -> float:
     """
-    Carries out exhaustive ICP. That is  it conditional independence tests of the form Y indep E|X_i
-    are formed for i in 1,2,...,len(combos). The features of X_i are taken from the i-th entry of combos
+    Normalised HSIC (centred kernel alignment) of two multivariate samples with
+    RBF kernels, as in pyrocast.icp.hsic.hsicRBF_jax.
+
     Args:
-        cube (numpy array): n x p matrix with meteorological and geo-stationary featues for each site and time. These features are different statistics of each of 30 met. and geo-st. vars
-        labels:  vector indicating whether a pyroCb occurred or not 6 hours after corresponding cube observation
-        envVar: matrix with the features that define the E variable in ICP. If given will also be included in RF model.
-        event_df: ancillary information for each observation including date, location, random and spatial clusters for CV, etc
-        cluster_var: one of 'cluster_random' or 'cluster_regional' indicates whether CV is random or spatial
-        varss: list of strings denoting the geostationary and meteorological variables in the cube
-        combos: list of lists. Each inner list corresponds to a set of features to define X, and carry out Y indep E |X conditional independnece test
-        posts: if indxIncl is given with respect to raw met. and geo. vars then posts include the indices where the statistics of each var begin and end
-        numTrees: the number of trees to use for each RF model
+        x: array of shape (n, p)
+        z: array of shape (n, q)
 
     Returns:
-        a list of dictionaries each of which contains results for each of the conditional independence test realized
+        value in [0, 1]; 0 for independent samples
     """
-    res = [
-        getHypWrapper2(
-            cube,
-            labels,
-            envVar,
-            event_df,
-            cluster_var,
-            varss,
-            combos,
-            j,
-            posts,
-            numTrees,
-        )
-        for j in range(len(combos))
+    n = len(x)
+    h = np.eye(n) - 1.0 / n
+    kx, kz = h @ _rbf_gram(x) @ h, h @ _rbf_gram(z) @ h
+    return float((kx * kz).sum() / np.linalg.norm(kx) / np.linalg.norm(kz))
+
+
+def minmax(x: np.ndarray) -> np.ndarray:
+    """Scale each column to [0, 1]; constant columns are left unchanged."""
+    lo, hi = x.min(axis=0), x.max(axis=0)
+    span = np.where(hi > lo, hi - lo, 1.0)
+    return np.where(hi > lo, (x - lo) / span, x)
+
+
+def hsic_matrix(
+    blocks: dict[str, np.ndarray], variables: list[str], n_samples: int, seed: int
+) -> np.ndarray:
+    """
+    Normalised HSIC between the min-max scaled features of each pair of
+    variables, on a random subset of samples.
+
+    Args:
+        blocks: feature block of each variable
+        variables: variables to compare
+        n_samples: samples used
+        seed: seed for the sample choice
+
+    Returns:
+        symmetric matrix with NaN on the diagonal
+    """
+    first = blocks[variables[0]]
+    rows = np.random.default_rng(seed).choice(len(first), n_samples, replace=False)
+    scaled = [minmax(blocks[v])[rows] for v in variables]
+    m = np.full((len(variables), len(variables)), np.nan)
+    for i, j in itertools.combinations(range(len(variables)), 2):
+        m[i, j] = m[j, i] = normalised_hsic(scaled[i], scaled[j])
+    return m
+
+
+def hsic_clusters(
+    matrix: np.ndarray, variables: list[str], threshold: float
+) -> list[list[str]]:
+    """
+    One cluster per variable: itself and every variable with HSIC >= threshold.
+
+    Args:
+        matrix: output of hsic_matrix
+        variables: variables of the matrix rows
+        threshold: dependence threshold
+
+    Returns:
+        clusters (not mutually exclusive), in variable order
+    """
+    return [
+        [variables[i]]
+        + [variables[j] for j in range(len(variables)) if matrix[i, j] >= threshold]
+        for i in range(len(variables))
     ]
-    return res
 
 
-def getSeqICP(
-    varsSelec, varss, posts, cluster_var, cube, labels, event_df, num_reps, seed
-):
-    print("varsSelec: ", varsSelec)
-    indxIncl = np.sort(
-        [findIndxAux(varss, varsSelec, i) for i in range(len(varsSelec))]
-    ).tolist()
-    indxIncl = np.array(
-        dp.flatten([np.arange(posts[i], posts[i + 1]).tolist() for i in indxIncl])
+def cluster_subsets(
+    clusters: list[list[str]], variables: list[str], min_size: int
+) -> list[list[str]]:
+    """
+    Unique unions of every combination of at least min_size clusters.
+
+    Args:
+        clusters: output of hsic_clusters
+        variables: variable order of the output subsets
+        min_size: smallest number of clusters combined
+
+    Returns:
+        distinct subsets of variables
+    """
+    unions = {
+        frozenset().union(*c)
+        for k in range(min_size, len(clusters) + 1)
+        for c in itertools.combinations(clusters, k)
+    }
+    subsets = [[v for v in variables if v in u] for u in unions]
+    return sorted(subsets, key=lambda s: (len(s), [variables.index(v) for v in s]))
+
+
+# ---------------------------------------------------------------------------
+# Validation of the greedy ordering (Figure 3)
+# ---------------------------------------------------------------------------
+
+
+def _fold_aucs(x, y, folds, n_estimators, cfg) -> list[float]:
+    prob = oof_predictions(x, y, folds, n_estimators, cfg)
+    return [auc_or_nan(y[folds == k], prob[folds == k]) for k in np.unique(folds)]
+
+
+def validate_ordering(
+    blocks: dict[str, np.ndarray],
+    y: np.ndarray,
+    order: list[str],
+    fold_schemes: dict[str, np.ndarray],
+    cfg: ICPConfig,
+) -> list[dict]:
+    """
+    Cross-validated AUC of forests on the variables left after each greedy step.
+
+    Args:
+        blocks: feature block of each variable
+        y: binary labels
+        order: greedy exclusion order
+        fold_schemes: fold of each sample, per cross-validation scheme name
+        cfg: ICP settings (validation_n_estimators trees)
+
+    Returns:
+        one record per (number of variables excluded, scheme) with the variables
+        used, the per-fold AUCs, and their mean and population std
+    """
+    jobs = [
+        (i, scheme, folds)
+        for i in range(len(order))
+        for scheme, folds in fold_schemes.items()
+    ]
+    aucs = Parallel(n_jobs=cfg.n_jobs)(
+        delayed(_fold_aucs)(
+            np.concatenate([blocks[v] for v in order[i:]], axis=1),
+            y,
+            folds,
+            cfg.validation_n_estimators,
+            cfg,
+        )
+        for i, _, folds in jobs
     )
-    res = [
-        getFold(
-            cluster,
-            cluster_var,
-            cube[:, indxIncl],
-            labels,
-            event_df,
-            num_reps,
-            seed,
-            byinistate=False,
-            importance=False,
-        )
-        for cluster in np.unique(event_df[cluster_var])
+    return [
+        {
+            "n_excluded": i,
+            "excluded": order[i - 1] if i else None,
+            "scheme": scheme,
+            "variables": order[i:],
+            "fold_auc": a,
+            "auc": float(np.nanmean(a)),
+            "auc_std": float(np.nanstd(a)),
+        }
+        for (i, scheme, _), a in zip(jobs, aucs)
     ]
-    res_msrs = [list(rm)[0] for rm in res]
-    res_msrs = pd.concat(res_msrs)
-    resMax = (
-        res_msrs[["rep", "fold", "auc", "fpr", "fnr"]].groupby(["fold"]).apply(maxAUC)
-    )  # .reset_index()#.rename(columns={0:"auc"})
-    res = {"mean": np.mean(resMax.auc), "std": np.std(resMax.auc)}
-    print(res)
-    return res
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def _stage(path: Path, compute):
+    """Load a stage result from path, or compute and save it."""
+    if path.exists():
+        logging.info("Loading %s", path)
+        return json.loads(path.read_text())
+    result = compute()
+    path.write_text(json.dumps(result, indent=2))
+    return result
+
+
+def run(cfg: ICPExperimentConfig) -> dict:
+    """
+    Run greedy ICP, exhaustive ICP, ICP on HSIC clusters and the validation of
+    the greedy ordering. Each stage is saved to the run directory and reloaded
+    when the run is repeated; test results are cached in icp_tests.jsonl.
+
+    Args:
+        cfg: ICP experiment config
+
+    Returns:
+        summary metrics, also written to metrics.json
+    """
+    run_dir = cfg.run_dir
+    run_dir.mkdir(parents=True, exist_ok=True)
+    m = cfg.model
+    index = get_sample_index(cfg.data, cfg.mode)
+    logging.info(
+        "Sample index (%s): %d samples, %d positive, %d wildfires",
+        cfg.mode,
+        len(index),
+        index.label.sum(),
+        index.wildfire_id.nunique(),
+    )
+    table = get_feature_table(cfg.data, index)
+    blocks = icp_blocks(index, table, cfg.data.elevation_path)
+    y = index.label.to_numpy(dtype=int)
+    folds = index.wildfire_id.map(wildfire_folds(index, cfg.split)).to_numpy()
+    test = ConditionalIndependenceTest(
+        blocks,
+        environment(index, m.environment),
+        y,
+        folds,
+        m,
+        cache=run_dir / "icp_tests.jsonl",
+    )
+    variables = list(ICP_VARIABLES)
+
+    full = test([variables])[0]
+    steps = _stage(run_dir / "greedy.json", lambda: greedy_icp(test, variables))
+    order = [s["excluded"] for s in steps]
+    causal = greedy_causal_set(steps, m.alpha)
+
+    selected = m.exhaustive_variables or order[-m.n_exhaustive :]
+    selected = list(test.key(selected))
+    exhaustive = _stage(
+        run_dir / "exhaustive.json",
+        lambda: {
+            "variables": selected,
+            **exhaustive_icp(
+                test, subsets_of_size(selected, m.min_subset_size), m.alpha
+            ),
+        },
+    )
+
+    def clusters_stage():
+        matrix = hsic_matrix(blocks, selected, m.hsic_samples, m.random_state)
+        clusters = hsic_clusters(matrix, selected, m.hsic_threshold)
+        subsets = cluster_subsets(clusters, selected, m.min_subset_size)
+        return {
+            "variables": selected,
+            "hsic": matrix.tolist(),
+            "clusters": clusters,
+            **exhaustive_icp(test, subsets, m.alpha),
+        }
+
+    clustered = _stage(run_dir / "clusters.json", clusters_stage)
+
+    def validation_stage():
+        schemes = {}
+        for scheme in ("event_cv", "spatial_cv"):
+            split = SplitConfig(
+                scheme=scheme, n_folds=cfg.split.n_folds, seed=cfg.split.seed
+            )
+            fold_of = wildfire_folds(index, split)
+            schemes[scheme] = index.wildfire_id.map(fold_of).to_numpy()
+        return validate_ordering(blocks, y, order, schemes, m)
+
+    validation = _stage(run_dir / "validation.json", validation_stage)
+
+    summary = {
+        "n_samples": len(index),
+        "n_positive": int(y.sum()),
+        "n_events": int(index.event_id.nunique()),
+        "n_wildfires": int(index.wildfire_id.nunique()),
+        "n_features": int(sum(b.shape[1] for b in blocks.values())),
+        "full_set_test": {k: v for k, v in full.items() if k != "subset"},
+        "greedy_order": order,
+        "greedy_pvalues": [s["pval_1tail"] for s in steps],
+        "greedy_causal_set": causal,
+        "exhaustive": {
+            k: exhaustive[k]
+            for k in ("variables", "n_tested", "n_accepted", "intersection")
+        }
+        | {"n_defining_sets": len(exhaustive["defining_sets"])},
+        "clusters": {
+            k: clustered[k]
+            for k in ("clusters", "n_tested", "n_accepted", "intersection")
+        },
+        "validation": {
+            scheme: {
+                "auc": [v["auc"] for v in validation if v["scheme"] == scheme],
+                "auc_std": [v["auc_std"] for v in validation if v["scheme"] == scheme],
+            }
+            for scheme in ("event_cv", "spatial_cv")
+        },
+    }
+    save_run(run_dir, cfg, summary)
+    logging.info("Greedy ICP causal set: %s", causal)
+    return summary
+
+
+def main(argv: list[str] | None = None) -> None:
+    """
+    Run every run of a YAML config (see utils.experiment.expand_grid), or one.
+
+    Args:
+        argv: command-line arguments, defaults to sys.argv
+    """
+    experiment_main(argv, ICPExperimentConfig, run, "Run invariant causal prediction")
+
+
+if __name__ == "__main__":
+    main()
