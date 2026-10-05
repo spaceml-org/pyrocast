@@ -170,6 +170,8 @@ def checkdate(curryear, currmonth, currday, opyear, opmonth, opday):
                 return True
             else:
                 return False
+        else:
+            return False
     else:
         return False
 
