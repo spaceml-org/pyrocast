@@ -1,0 +1,41 @@
+# Random forests of Tables 1 (event CV) and 3 (spatial CV) of Tazi et al. 2022,
+# arXiv:2211.13052: every task and input set. One run per grid combination, in
+# results/paper/rf/<scheme>_<mode>_<input set>/.
+#   pyrocast-train-rf --config configs/paper/rf.yaml --list     # list the 28 runs
+#   pyrocast-train-rf --config configs/paper/rf.yaml --index 3  # run one of them
+
+experiment_name: rf
+output_dir: results/paper
+
+data:
+  root: /data/hpcdata/users/kenzi22/data/pyrocast
+  index_cache: results/sample_index.csv
+  feature_cache: results/features.pkl
+  countries: [Australia, US, Canada]  # the papers train on North America and Australia
+  n_jobs: 16
+
+split:
+  n_folds: 5
+  seed: 0
+
+model:
+  n_estimators: 500
+  max_depth: 10
+  class_weight: balanced_subsample
+  n_jobs: -1
+
+grid:
+  split.scheme:
+    event: event_cv
+    spatial: spatial_cv
+  mode: [detection, forecast_oracle, forecast]
+  inputs:
+    gs: {inputs: geostationary}
+    w3: {inputs: era5, era5_variables: [cape, blh, r650]}
+    gs+w3: {inputs: both, era5_variables: [cape, blh, r650]}
+    w19: {inputs: era5}
+    gs+w19: {inputs: both}
+
+# Without ERA5 inputs the oracle forecast is the forecast run.
+exclude:
+  - {mode: forecast_oracle, inputs: gs}

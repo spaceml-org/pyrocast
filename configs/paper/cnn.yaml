@@ -1,0 +1,43 @@
+# CNNs and AE-CNNs of Tables 1 (event CV) and 3 (spatial CV) of Tazi et al.
+# 2022, arXiv:2211.13052. One run per grid combination, in
+# results/paper/cnn/<scheme>_<model>_<mode>_<input set>/.
+#   pyrocast-train-cnn --config configs/paper/cnn.yaml --list     # list the 32 runs
+#   pyrocast-train-cnn --config configs/paper/cnn.yaml --index 3  # run one of them
+
+experiment_name: cnn
+output_dir: results/paper
+
+data:
+  root: /data/hpcdata/users/kenzi22/data/pyrocast
+  index_cache: results/sample_index.csv
+  countries: [Australia, US, Canada]  # the papers train on North America and Australia
+  n_jobs: 16
+
+split:
+  n_folds: 5
+  seed: 0
+
+model:
+  n_epochs: 5
+  batch_size: 64
+  lr: 0.001
+  num_workers: 8
+  norm_samples: 512
+  device: auto
+
+grid:
+  split.scheme:
+    event: event_cv
+    spatial: spatial_cv
+  model.pretrain_epochs:
+    cnn: 0
+    aecnn: 40  # auto-encoder pretraining of the encoder
+  mode: [detection, forecast_oracle, forecast]
+  inputs:
+    gs: {inputs: geostationary}
+    w3: {inputs: era5, era5_variables: [cape, blh, r650]}
+    gs+w3: {inputs: both, era5_variables: [cape, blh, r650]}
+
+# Without ERA5 inputs the oracle forecast is the forecast run.
+exclude:
+  - {mode: forecast_oracle, inputs: gs}

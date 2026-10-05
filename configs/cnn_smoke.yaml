@@ -1,0 +1,31 @@
+# Smoke test: first 100 events, small model.
+# Pyrocast CNN (6 conv + 2 fully connected layers, Adam, cross-entropy) on
+# normalised 200x200 cubes, predicting the PyroCb flag (see mode). Set
+# model.pretrain_epochs: 40 for the auto-encoder-pretrained AE-CNN.
+# Channel mean/std are estimated from norm_samples training samples.
+
+experiment_name: cnn_smoke
+output_dir: results
+mode: forecast  # detection | forecast | forecast_oracle (needs era5 inputs)
+inputs: geostationary  # geostationary | era5 | both
+
+data:
+  root: /data/hpcdata/users/kenzi22/data/pyrocast
+  index_cache: results/sample_index.csv
+  n_jobs: 16
+  max_events: 100  # quick check of the pipeline
+
+split:
+  scheme: holdout  # holdout | event_cv | spatial_cv (5 folds by wildfire)
+  test_fraction: 0.2
+  seed: 0
+
+model:
+  n_epochs: 1
+  pretrain_epochs: 0
+  batch_size: 64
+  lr: 0.001
+  num_workers: 8
+  norm_samples: 64
+  device: auto  # auto | cpu | cuda
+  seed: 0

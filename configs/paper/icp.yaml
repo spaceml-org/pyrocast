@@ -1,0 +1,23 @@
+# ICP study of Diaz Salas-Porras et al. 2022, arXiv:2211.08883, on the 6-hour
+# forecast samples. Model defaults are the paper's settings (100 trees, alpha 0.05,
+# environment = longitude, latitude, date). Writes results/paper/icp/.
+
+experiment_name: icp
+output_dir: results/paper
+mode: forecast
+
+data:
+  root: /data/hpcdata/users/kenzi22/data/pyrocast
+  index_cache: results/sample_index.csv
+  feature_cache: results/features.pkl
+  countries: [Australia, US, Canada]
+  n_jobs: 16
+  elevation_path: /data/hpcdata/users/kenzi22/data/Elevation/elev.0.25-deg.nc
+
+split:
+  scheme: event_cv
+  n_folds: 5
+  seed: 0
+
+model:
+  n_jobs: -1
