@@ -1,5 +1,7 @@
 # Smoke test: first 100 events, small model.
-# CNN on normalised 200x200 cubes, predicting the PyroCb flag (see mode).
+# Pyrocast CNN (6 conv + 2 fully connected layers, Adam, cross-entropy) on
+# normalised 200x200 cubes, predicting the PyroCb flag (see mode). Set
+# model.pretrain_epochs: 40 for the auto-encoder-pretrained AE-CNN.
 # Channel mean/std are estimated from norm_samples training samples.
 
 experiment_name: cnn_smoke
@@ -14,14 +16,15 @@ data:
   max_events: 100  # quick check of the pipeline
 
 split:
+  scheme: holdout  # holdout | event_cv | spatial_cv (5 folds by wildfire)
   test_fraction: 0.2
   seed: 0
 
 model:
-  n_epochs: 2
+  n_epochs: 1
+  pretrain_epochs: 0
   batch_size: 64
   lr: 0.001
-  momentum: 0.9
   num_workers: 8
   norm_samples: 64
   device: auto  # auto | cpu | cuda

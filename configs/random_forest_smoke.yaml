@@ -1,21 +1,26 @@
 # Smoke test: first 100 events, small model.
-# Random forest trained on per-channel summary statistics (mean, std and
-# 10/50/90th percentiles) of each 200x200 cube, predicting the PyroCb flag (see mode).
-# Fires are split between train and test, never shared.
+# Random forest trained on 11 summary statistics (mean, std, min, max and
+# 1/5/25/50/75/95/99th percentiles) of each channel of the 200x200 cubes,
+# predicting the PyroCb flag (see mode). Wildfires are split between train and
+# test, never shared.
 
 experiment_name: random_forest_smoke
 output_dir: results
 mode: forecast  # detection | forecast | forecast_oracle (needs era5 inputs)
 inputs: both  # geostationary | era5 | both
+# era5_variables: [cape, blh, r650]  # subset of ERA5 (the paper's w3)
 
 data:
   root: /data/hpcdata/users/kenzi22/data/pyrocast
   # Hourly flags of all events, built on first run and reused by every mode.
   index_cache: results/sample_index.csv
+  # 11 statistics of every channel and hour, built on first use and shared.
+  feature_cache: results/features.pkl
   n_jobs: 16
   max_events: 100  # quick check of the pipeline
 
 split:
+  scheme: holdout  # holdout | event_cv | spatial_cv (5 folds by wildfire)
   test_fraction: 0.2
   seed: 0
 
