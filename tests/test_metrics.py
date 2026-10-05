@@ -42,3 +42,30 @@ def test_classification_report_threshold():
     report_high = classification_report(y_true, y_pred, threshold=0.8)
     # low threshold -> more FP, fewer FN
     assert report_low["fnr"] <= report_high["fnr"]
+
+
+def test_cv_report():
+    import pandas as pd
+
+    from pyrocast.utils.metrics import cv_report
+
+    predictions = pd.DataFrame(
+        {
+            "label": [0, 1, 0, 1, 0, 1, 0, 1],
+            "prob": [0.1, 0.9, 0.2, 0.8, 0.6, 0.4, 0.3, 0.5],
+            "fold": [0, 0, 0, 0, 1, 1, 1, 1],
+            "state_now": [0, 1, 4, 4, 2, 2, 4, -1],
+        }
+    )
+    report = cv_report(predictions)
+    assert report["fold_auc"] == [1.0, 0.5]
+    assert report["auc"] == pytest.approx(0.75)
+    assert report["auc_std"] == pytest.approx(0.25)
+    assert report["n_folds"] == 2
+    by_state = report["auc_by_state"]
+    # states 0 and 1 are both "none"; state -1 (missing flag) is left out
+    assert set(by_state) == {"none", "pyrocb", "convection"}
+    assert by_state["none"]["fold_auc"] == [1.0]
+    assert by_state["convection"]["auc"] == 0.0
+    assert by_state["pyrocb"]["n"] == 3
+    assert np.isnan(by_state["pyrocb"]["fold_auc"][1])
