@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyrocast"
+version = "0.1.0"
+description = "End-to-end ML pipeline for prediction of extreme wildfires and pyrocumulonimbus clouds"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+]
+dependencies = [
+    "cdsapi",
+    "fsspec",
+    "gcsfs",
+    "google-cloud-bigquery",
+    "google-cloud-storage",
+    "jax",
+    "jaxlib",
+    "joblib",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "pydantic>=2",
+    "pysolar",
+    "pyyaml",
+    "pytz",
+    "scikit-learn",
+    "scipy",
+    "torch",
+    "torchvision",
+    "tqdm",
+    "xarray",
+    "zarr",
+]
+
+[project.scripts]
+pyrocast-train-rf = "pyrocast.models.random_forest:main"
+pyrocast-train-cnn = "pyrocast.models.cnn:main"
+pyrocast-features = "pyrocast.utils.data.features:main"
+pyrocast-icp = "pyrocast.icp.icp:main"
+pyrocast-paper-report = "pyrocast.paper:main_report"
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "pre-commit",
+    "pytest",
+    "jupyter",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.pytest.ini_options]
+markers = ["slow: end-to-end tests that train a model (deselect with '-m \"not slow\"')"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
